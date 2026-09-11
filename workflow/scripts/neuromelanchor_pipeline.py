@@ -77,6 +77,8 @@ import shutil
 import logging
 import argparse
 import subprocess
+import SimpleITK as sitk
+
 from pathlib import Path 
 from datetime import datetime
 
@@ -95,6 +97,22 @@ from nipype.interfaces.io import SelectFiles, DataSink
 from nipype.interfaces.spm import Realign, Smooth
 from nipype.interfaces.utility import IdentityInterface, Function
 from nipype.interfaces.ants import Registration, BrainExtraction, ApplyTransforms, N4BiasFieldCorrection
+
+# =================================================================
+# Container Runtime Detection
+# =================================================================
+
+def get_container_cmd(project_root):
+    sif = Path(project_root) / "fireants.sif"
+    if sif.exists() and shutil.which("singularity"):
+        return ["singularity", "exec", "--nv", f"--bind={project_root}", str(sif), "python"]
+    if sif.exists() and shutil.which("apptainer"):
+        return ["apptainer", "exec", "--nv", f"--bind={project_root}", str(sif), "python"]
+    if shutil.which("docker"):
+        return ["docker", "run", "--gpus", "all", "--rm",
+                "-v", f"{project_root}:{project_root}",
+                "--entrypoint", "python", "fireants"]
+    return None
 
 # =================================================================
 # Argument Parsing
@@ -120,24 +138,82 @@ parser.add_argument("--skip_core_rim_nm", action="store_true", help="Disable opt
 parser.add_argument("--test", action="store_true", help="Test mode: run only the first subject or write TEST group-QC outputs")
 parser.add_argument("--nm_image_strategy", choices=["mean", "first"], default="mean", help="Strategy to create the subject NM image. mean = realign and average all acquistion; first = only use first acquisition (default: mean)")
 parser.add_argument("--nm_image_n", default=None, type=int, help="Optional: in mean mode, average only the first N ComboEchoNM acquistions")
+parser.add_argument('--hires', action='store_true', help='Also output NM_MNI_res-05.nii at 0.5mm by re-applying saved transforms to a finer grid.')
+parser.add_argument('--skip_template_builder', action='store_true', help='Skip FireANTs iterative NM template build; use the naive group mean for ITK-SNAP instead')
+parser.add_argument('--drawing_template', choices=['v4', 'naive'], default='v4', help="Template the SN/CP masks are drawn on in --stage segment: v4 = FireANTs V4 midbrain template (default), naive = plain group mean")
+parser.add_argument('--rebuild_template', action='store_true', help="Rebuild and re-align the V4 drawing template")
+
+parser.add_argument("--nm_input", choices=["combo", "echo"], default="combo", help="NM source: 'combo' = vendor-combined multi-echo GRE (default, higher SNR)'echo' = single MEGRE echo, selected by --nm_echo")
+parser.add_argument("--cohort", choices=["biogen", "snit"], default="biogen", help="Selects the BIDS filename conventions used to find NM and T1 images (default: biogen)")
+parser.add_argument("--nm_pattern", default=None, help="Override the NM SelectFiles glob. Use {subject_id} for the subject and {echo} for --nm_echo")
+parser.add_argument("--t1_pattern", default=None, help="Override the T1 SelectFiles glob. Use {subject_id} for the subject")
+parser.add_argument("--nm_echo", default=3, type=int, help="Echo number to use when --nm_input echo (default: 2)")
 args = parser.parse_args()
+if args.skip_template_builder:
+    args.drawing_template = 'naive'
 
 # =================================================================
 # NM Mask Method Settings
 # =================================================================
 
-# These are method choices, not routine command-line options.
-# Keep them here so the masking assumptions are easy to audit.
+# This is minimum allowed cnr threshold for NM-defined seed (Accept voxels must be at least 5% brighter than background)
 seed_cnr_floor = 0.05
+# Subject-adpative threshold inside the SNsearch mask. Keep's voxels above a specified percentile
 seed_cnr_percentile = 55
+# Removes tiny, disconnected islands (Connected clusters must be 15 voxels or more. Somewhat arbitrary but rectified by keeping only 2 components)
 seed_min_cluster_voxels = 15
+# Keeps only the largest 2 connected components
 seed_components_to_keep = 2
 
-core_rim_erosion_mm = 1.0
+# Removes approximalty 1 mm from the outside boundary of the mask (assumes uncertain boundaries)
+core_rim_erosion_mm = 0.5
+# CNR threshold for the core part of the NM mask (more liberal)
 core_rim_core_cnr_threshold = 0.05
+# CNR threshold for the rim part of the NM mask (more strict)
 core_rim_rim_cnr_threshold = 0.10
+# Minimum cluster size for the rim
 core_rim_min_cluster_voxels = 25
+# Keeps only the largest 2 connected components
 core_rim_components_to_keep = 2
+
+# =================================================================
+# Cohort Input Patterns
+# =================================================================
+# SelectFiles globs, relative to --design_dir. These were previously switched by
+# commenting blocks in and out of the Stage 1 workflow; they are data now so a new
+# cohort is a table entry (or a --nm_pattern/--t1_pattern override) rather than an edit.
+
+COHORT_INPUT_PATTERNS = {
+    "biogen": {
+        "combo": "{subject_id}/anat/{subject_id}_acq-CombEchoNM*_GRE.nii.gz",
+        "echo":  "{subject_id}/anat/{subject_id}_run-1_echo-{echo}_part-mag_MEGRE.nii.gz",
+        "t1":    "{subject_id}/anat/{subject_id}_acq-T1w.nii.gz",
+    },
+    "snit": {
+        "combo": "{subject_id}/anat/{subject_id}_acq-CombEchoNM*_GRE.nii.gz",
+        "echo":  "{subject_id}/anat/{subject_id}_acq-NM_rec-DIS2D_run-*_echo-{echo}_part-mag_GRE.nii.gz",
+        "t1":    "{subject_id}/anat/{subject_id}_acq-MP2RAGEpostproc_run-01_T1w.nii.gz",
+    },
+}
+
+
+def resolve_input_patterns(cohort, nm_input, nm_echo, nm_override=None, t1_override=None):
+    """
+    Return the (NM, T1) SelectFiles globs for a cohort.
+
+    ``{subject_id}`` is deliberately left in place for SelectFiles to fill per
+    subject; ``{echo}`` is substituted here because the echo number is fixed for
+    the whole run. An explicit override always wins over the cohort default.
+    """
+    defaults = COHORT_INPUT_PATTERNS[cohort]
+    nm_pattern = nm_override if nm_override else defaults[nm_input]
+    t1_pattern = t1_override if t1_override else defaults["t1"]
+    return nm_pattern.replace("{echo}", str(nm_echo)), t1_pattern
+
+
+nm_pattern, t1_pattern = resolve_input_patterns(
+    args.cohort, args.nm_input, args.nm_echo, args.nm_pattern, args.t1_pattern
+)
 
 # =================================================================
 # Paths
@@ -187,8 +263,11 @@ log.info(f"core_rim_min_cluster: {core_rim_min_cluster_voxels}")
 log.info(f"core_rim_keep_comp  : {core_rim_components_to_keep}")
 log.info(f"skip_core_rim_nm    : {args.skip_core_rim_nm}")
 log.info(f"test mode           : {args.test}")
-log.info(f"nm_image_stategy: {args.nm_image_strategy}")
-log.info(f"nm_image_n      : {args.nm_image_n}")
+log.info(f"nm_image_stategy    : {args.nm_image_strategy}")
+log.info(f"nm_image_n          : {args.nm_image_n}")
+log.info(f"cohort              : {args.cohort}")
+log.info(f"nm_pattern          : {nm_pattern}")
+log.info(f"t1_pattern          : {t1_pattern}")
 log.info("=" * 60)
 
 # =================================================================
@@ -200,6 +279,160 @@ def require_existing_file(path, label):
     if not Path(path).exists():
         raise FileNotFoundError(f"{label} not found at: {path}")
 
+# =================================================================
+# V4 Drawing Template Helpers
+# =================================================================
+# These functions let --stage segment build the V4 template, line it up with
+# the group average, and keep track of which template a tracing was drawn on.
+
+
+
+
+def find_subjects_missing_hires(output_base):
+    """
+    List subjects that are missing the 0.5 mm NM image V4 is built from.
+    Stage 1 always writes a 1 mm image (NM_MNI.nii). With --hires it also writes
+    a 0.5 mm image (NM_MNI_res-05.nii). V4 should be built from 0.5 mm images only.
+    """
+    missing_subjects = []
+    for nm_mni_path in sorted(Path(output_base).glob('sub-*/anat/NM_MNI.nii')):
+        hires_path = nm_mni_path.parent / 'NM_MNI_res-05.nii'
+        if not hires_path.exists():
+            subject_id = nm_mni_path.parent.parent.name
+            missing_subjects.append(subject_id)
+    return missing_subjects
+
+
+def build_v4_template(project_root, output_base, v4_template):
+    """
+    Build the V4 midbrain template with template_builder.py in the FireANTs container.
+
+    Settings match the echo-1 build: 12 iterations, rigid + SyN, shape averaging
+    with a 0.25 step, no Laplacian sharpening. Takes about 35 minutes on the GPU.
+    """
+    if not Path(output_base).resolve().is_relative_to(Path(project_root).resolve()):
+        raise ValueError("--output_root must sit inside --project_root so the container can see it.")
+
+    container_cmd = get_container_cmd(project_root)
+    if container_cmd is None:
+        log.warning("No container runtime found - running the V4 builder with the local Python")
+        container_cmd = [sys.executable]
+
+    builder_cmd = container_cmd + [
+        str(project_root / "workflow" / "scripts" / "template_builder.py"),
+        "--output-root", str(output_base),
+        "--work-dir", str(Path(v4_template).parent / "build"),
+        "--output-template", str(v4_template),
+        "--mni-prior", str(mask_dir / "HarvardOxford" / "Midbrain.nii.gz"),
+        "--iterations", "12",
+        "--rigid",
+        "--shape-avg",
+        "--shape-avg-step", "0.25",
+        "--laplacian", "0",
+    ]
+
+    log.info(f"Building the V4 drawing template: {' '.join(builder_cmd)}")
+    subprocess.run(builder_cmd, check=True)
+    require_existing_file(v4_template, "V4 drawing template")
+
+def align_v4_to_group_average(v4_template, group_average, aligned_v4):
+    """
+    Shift V4 about 1.3 mm so it sits exactly where the group average does.
+
+    Stage 2 registers every subject to the group average, so a mask drawn on V4 only
+    lands correctly if the two templates agree on where the midbrain is. The shift is
+    rigid (no stretching) and the result keeps V4's own 0.5 mm grid for drawing.
+    """
+
+    # ANTs runs from inside this folder, so all paths must be absolute.
+    v4_template = Path(v4_template).resolve()
+    group_average = Path(group_average).resolve()
+    aligned_v4 = Path(aligned_v4).resolve()
+    drawing_dir = aligned_v4.parent
+
+    # V4 is a midbrain crop surrounded by zeros. Without a mask those zeros pull the
+    # alignment off (tested: 0.7 mm instead of 1.3 mm), so mark the part V4 covers.
+    v4_img = nib.load(str(v4_template))
+    v4_mask = drawing_dir / "V4_Mask.nii.gz"
+    nib.save(nib.Nifti1Image((v4_img.get_fdata() > 0).astype(np.uint8), v4_img.affine), str(v4_mask))
+
+    # V4 is the fixed image because its small crop keeps this to about 15 seconds.
+    # No centre-of-mass start: the two templates are already within a couple of millimetres.
+    group_to_v4 = Registration()
+    group_to_v4.inputs.fixed_image = str(v4_template)
+    group_to_v4.inputs.moving_image = str(group_average)
+    group_to_v4.inputs.fixed_image_masks = [str(v4_mask)]
+    group_to_v4.inputs.transforms = ['Rigid']
+    group_to_v4.inputs.transform_parameters = [(0.1,)]
+    group_to_v4.inputs.metric = ['CC']
+    group_to_v4.inputs.metric_weight = [1]
+    group_to_v4.inputs.radius_or_number_of_bins = [2]
+    group_to_v4.inputs.sampling_strategy = [None]
+    group_to_v4.inputs.sampling_percentage = [None]
+    group_to_v4.inputs.number_of_iterations = [[60, 30]]
+    group_to_v4.inputs.shrink_factors = [[4, 2]]
+    group_to_v4.inputs.smoothing_sigmas = [[2, 1]]
+    group_to_v4.inputs.sigma_units = ['vox']
+    group_to_v4.inputs.convergence_threshold = [1e-7]
+    group_to_v4.inputs.convergence_window_size = [10]
+    group_to_v4.inputs.output_transform_prefix = str(drawing_dir / "GroupAverage_to_V4_")
+    group_to_v4.inputs.environ = safe_env
+    rigid_transform = group_to_v4.run(cwd=str(drawing_dir)).outputs.forward_transforms[0]
+
+    # The transform points from V4 to the group average, so it is applied inverted.
+    align_v4 = ApplyTransforms()
+    align_v4.inputs.dimension = 3
+    align_v4.inputs.input_image = str(v4_template)
+    align_v4.inputs.reference_image = str(v4_template)
+    align_v4.inputs.transforms = [rigid_transform]
+    align_v4.inputs.invert_transform_flags = [True]
+    align_v4.inputs.interpolation = 'LanczosWindowedSinc'
+    align_v4.inputs.output_image = str(aligned_v4)
+    align_v4.inputs.environ = safe_env
+    align_v4.run(cwd=str(drawing_dir))
+
+    # Report how far V4 moved, so the log shows it was a small shift and not a failure.
+    v4_sitk = sitk.ReadImage(str(v4_template))
+    v4_centre = v4_sitk.TransformContinuousIndexToPhysicalPoint([size / 2.0 for size in v4_sitk.GetSize()])
+    moved_centre = sitk.ReadTransform(str(rigid_transform)).TransformPoint(v4_centre)
+    log.info(f"V4 aligned to the group average: shifted {np.linalg.norm(np.subtract(moved_centre, v4_centre)):.2f} mm")
+
+
+def create_blank_v4_mask(v4_template_path, mask_path):
+    """
+    Create an empty mask (all zeros) on exactly the same grid as the V4 template.
+
+    ITK-SNAP draws into this file, so your labels are saved at V4's full 0.5 mm resolution.
+    """
+    v4_img = nib.load(str(v4_template_path))
+    mask_header = v4_img.header.copy()
+    mask_header.set_data_dtype(np.uint8)
+    blank_mask = np.zeros(v4_img.shape[:3], dtype=np.uint8)
+    nib.save(nib.Nifti1Image(blank_mask, v4_img.affine, mask_header), str(mask_path))
+
+
+def images_share_grid(first_image_path, second_image_path):
+    """Return True if two images have the same size and sit in the same place in space."""
+    first_img = nib.load(str(first_image_path))
+    second_img = nib.load(str(second_image_path))
+    same_size = first_img.shape[:3] == second_img.shape[:3]
+    same_position = np.allclose(first_img.affine, second_img.affine, atol=1e-4)
+    return same_size and same_position
+
+
+def write_itksnap_label_file(label_file_path):
+    """Write the label names and colours ITK-SNAP shows while you draw (1 = CP in cyan, 2 = SN in yellow)."""
+    label_lines = [
+        "################################################",
+        "# ITK-SnAP Label Description File",
+        "# IDX   -R-  -G-  -B-  -A--  VIS MSH  LABEL",
+        "################################################",
+        '    0     0    0    0        0  0  0    "Clear Label"',
+        '    1   255    0    0        1  1  1    "Cerebral Penducle (Background)"',
+        '    2     0  255    0        1  1  1    "Substantia Nigra (Target)"',
+    ]
+    with open(label_file_path, 'w') as f:
+        f.write("\n".join(label_lines) + "\n")
 
 # =================================================================
 # Environment and Thread Control
@@ -209,7 +442,7 @@ n_threads = str(min(args.n_procs, 8))
 safe_env = {'ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS': n_threads, 'OMP_NUM_THREADS': n_threads}
 
 needs_itksnap = args.stage in ['segment', 'all']
-needs_ants = args.stage in ['1', '2', 'all']
+needs_ants = args.stage in ['1', '2', 'segment','all']
 needs_matlab = args.stage in ['1', 'all']
 
 if needs_itksnap and shutil.which('itksnap') is None:
@@ -252,6 +485,13 @@ log.info(f"Found {len(subjects)} subjects(s): {subjects}")
 # =================================================================
 # Templates and Masks
 # =================================================================
+mask_dir = project_root / "resources" / "tpl-MNI152NLin2009cAsym"
+use_v4_drawing = args.drawing_template == 'v4'
+trace_dir = output_base / ("manual_trace_v4" if use_v4_drawing else "manual_trace")
+trace_dir.mkdir(parents=True, exist_ok=True)
+drawing_dir = output_base / "drawing_template"
+v4_template = drawing_dir / "SN_Template_V4.nii.gz"
+v4_aligned_template = drawing_dir / "SN_Template_V4_aligned.nii.gz"
 
 t1_template = get('MNI152NLin2009cAsym', resolution=1, suffix='T1w', desc=None, extension='nii.gz')
 if isinstance(t1_template, list):
@@ -267,17 +507,19 @@ brain_prob_template = get('MNI152NLin2009cAsym', resolution=1, desc='brain', suf
 if isinstance(brain_prob_template, list):
     brain_prob_template = brain_prob_template[0]
 log.info(f"Prob Brain Candidates, {brain_prob_template}")
+hires_ref_path = mask_dir / 'MNI152NLin2009cAsym_res-05_desc-brain_T1w.nii.gz'
+if args.hires and not hires_ref_path.exists():
+    raise FileNotFoundError(f"0.5mm MNI reference not found at {hires_ref_path}. Generate it first.")
+
 
 log.info(f"{'='*60}")
 log.info(f"Whole-head T1 template: {t1_template}")
 log.info(f"Brain-extracted template: {t1_brain_template}")
 log.info(f"Brain probability mask: {brain_prob_template}")
 log.info(f"{'='*60}")
-
-mask_dir = project_root / "resources" / "tpl-MNI152NLin2009cAsym"
-combined_mask = str(mask_dir /"MNI_Manual_Masks_combined.nii.gz")
-SN_mask = str(mask_dir / "MNI_SNc_Manual.nii.gz")
-CP_mask = str(mask_dir /"MNI_CP_Manual.nii.gz")
+combined_mask = str(trace_dir / "MNI_Manual_Masks_combined.nii.gz")
+SN_mask       = str(trace_dir / "MNI_SNc_Manual.nii.gz")
+CP_mask       = str(trace_dir / "MNI_CP_Manual.nii.gz")
 BrainStem_mask = str(mask_dir / "HarvardOxford" / "Brainstem.nii.gz")
 atlas_mask_mni = str(mask_dir / "CIT168" / "SNc.nii.gz")
 default_prob_atlas_mni = mask_dir / "CIT168_prob" / "CIT168toMNI152-2009c_prob_0006.nii.gz"
@@ -364,52 +606,42 @@ def compute_motion_params(realignment_parameters):
     return stats_file
 
 def check_run_similarity(realigned_files):
-    """Create a simple QC image comparing the first and second halves of NM runs."""
+    """Create a QC image overlaying realigned NM runs to assess run alignment."""
     import os
-    import numpy as np
-    from nilearn.image import mean_img, math_img
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
     from nilearn.plotting import plot_anat
 
-    out_png = os.path.abspath('Run_Difference_QC.png')
+    out_png = os.path.abspath('Run_Alignment_Overlay_QC.png')
 
-    if len(realigned_files) < 2:
-        import matplotlib
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
+    if isinstance(realigned_files, str):
+        files = [realigned_files]
+    else:
+        files = sorted(list(realigned_files))
 
+    if len(files) == 0:
+        raise ValueError("No realigned NM files were provided for run alignment QC.")
+
+    if len(files) < 2:
         fig, ax = plt.subplots(figsize=(6, 2))
-        ax.text(
-            0.5,
-            0.5,
-            'Run comparison skipped: only 1 run detected.',
-            ha='center',
-            va='center',
-            fontsize=11,
-            color='gray',
-            transform=ax.transAxes,
-        )
+        ax.text(0.5, 0.5, 'Run alignment QC skipped: only 1 run detected.', ha='center', va='center',
+            fontsize=11, color='gray', transform=ax.transAxes,)
         ax.axis('off')
         fig.tight_layout()
         fig.savefig(out_png, dpi=150, bbox_inches='tight')
         plt.close(fig)
         return out_png
 
-    split_index = len(realigned_files) // 2
-    first_half_mean_img = mean_img(realigned_files[:split_index])
-    second_half_mean_img = mean_img(realigned_files[split_index:])
+    display = plot_anat(files[0], title=f'Realigned NM run overlay ({len(files)} runs)',
+        display_mode='ortho', draw_cross=False)
 
-    first_half_data = first_half_mean_img.get_fdata()
-    second_half_data = second_half_mean_img.get_fdata()
-    run_correlation = np.corrcoef(first_half_data.ravel(), second_half_data.ravel())[0, 1]
+    edge_colors = ['red', 'lime', 'cyan', 'magenta', 'yellow', 'orange', 'blue']
 
-    difference_img = math_img('img1 - img2', img1=first_half_mean_img, img2=second_half_mean_img)
-    display = plot_anat(
-        difference_img,
-        title=f'Run 1 - Run 2 (r = {run_correlation:.3f})',
-        display_mode='ortho',
-        cmap='RdBu_r',
-        draw_cross=False,
-    )
+    for run_index, run_file in enumerate(files[1:], start=2):
+        color = edge_colors[(run_index - 2) % len(edge_colors)]
+        display.add_edges(run_file, color=color)
+
     display.savefig(out_png, dpi=150)
     display.close()
 
@@ -418,6 +650,12 @@ def check_run_similarity(realigned_files):
 def combine_transforms(t1_to_mni_composite, nm_to_t1_composite):
     """Return transforms in the order expected by ANTs ApplyTransforms."""
     return [t1_to_mni_composite, nm_to_t1_composite]
+
+def combine_prealign_transforms(nm_to_t1_inverse, t1_to_mni_inverse):
+    return [nm_to_t1_inverse, t1_to_mni_inverse]
+
+def combine_downstream_inverse(t1_to_mni_inverse, nm_to_t1_inverse):
+    return [t1_to_mni_inverse, nm_to_t1_inverse]
 
 def generate_qc_nm(nm_mni_image, t1_template_image):
     import os
@@ -452,9 +690,8 @@ def generate_qc_t1(t1_mni_image, t1_template_image):
     print(f"\n{'='*60}")
 
     out_png = os.path.abspath('Registration_norm-T1_to_MNI_QC.png')
-    display = plotting.plot_anat(t1_template_image,
-                                            display_mode='ortho', dim=-0.5, cmap='gray',
-                                            title="T1-norm to MNI Alignment QC", draw_cross=False, colorbar=False)
+    display = plotting.plot_anat(t1_template_image, display_mode='ortho', dim=-0.5, cmap='gray', 
+                                 title="T1-norm to MNI Alignment QC", draw_cross=False, colorbar=False)
     display.add_overlay(t1_mni_image, cmap='Reds', alpha=0.8)
     display.savefig(out_png, dpi=300)
     display.close()
@@ -483,30 +720,15 @@ def generate_qc_atlas(atlas_mask_mni, t1_mni_image):
         cut_coords = [0, -15, -12]
 
     out_png = os.path.abspath('Registration_Atlas_on_T1Norm_QC.png')
-    display = plotting.plot_anat(
-        t1_mni_image,
-        display_mode='ortho',
-        cut_coords=cut_coords,
-        dim=-0.5,
-        cmap='gray',
-        title='Atlas on T1-norm QC',
-        draw_cross=False,
-        colorbar=False,
-    )
+    display = plotting.plot_anat(t1_mni_image, display_mode='ortho', cut_coords=cut_coords, dim=-0.5, cmap='gray', title='Atlas on T1-norm QC',
+        draw_cross=False, colorbar=False,)
     display.add_overlay(atlas_mask_mni, cmap='Reds', alpha=0.8)
     display.savefig(out_png, dpi=300)
     display.close()
     return out_png
 
-def extract_tractography_seed(
-    nm_image,
-    native_sn_mask,
-    native_cp_mask,
-    cnr_floor=0.05,
-    cnr_percentile=60,
-    min_cluster_vox=15,
-    keep_components=2,
-):
+def extract_tractography_seed(nm_image, native_sn_mask, native_cp_mask, cnr_floor=0.05, cnr_percentile=60, min_cluster_vox=15,
+    keep_components=2):
     """
     Create the subject-specific NM seed mask.
 
@@ -515,6 +737,7 @@ def extract_tractography_seed(
     floor and above a chosen percentile of this subject's SN-search CNR values.
     """
     import os
+    import json
     import nibabel as nib
     import numpy as np
     import scipy.ndimage as ndi
@@ -529,22 +752,14 @@ def extract_tractography_seed(
         if n_components == 0:
             return filled_mask
 
-        component_sizes = ndi.sum(
-            filled_mask,
-            component_labels,
-            index=np.arange(1, n_components + 1),
-        )
-        components_to_keep = [
-            int(i + 1)
-            for i, size in enumerate(component_sizes)
+        component_sizes = ndi.sum(filled_mask, component_labels,index=np.arange(1, n_components + 1),)
+
+        components_to_keep = [int(i + 1) for i, size in enumerate(component_sizes)
             if size >= int(min_size)
         ]
         if components_to_keep and int(max_components) > 0:
-            components_to_keep = sorted(
-                components_to_keep,
-                key=lambda component_id: component_sizes[component_id - 1],
-                reverse=True,
-            )[: int(max_components)]
+            components_to_keep = sorted(components_to_keep,key=lambda component_id: component_sizes[component_id - 1],
+            reverse=True,)[: int(max_components)]
 
         if not components_to_keep:
             return np.zeros_like(filled_mask, dtype=bool)
@@ -556,12 +771,17 @@ def extract_tractography_seed(
     nm_data = nm_img.get_fdata()
     sn_mask = nib.load(native_sn_mask).get_fdata().astype(bool)
     cp_mask = nib.load(native_cp_mask).get_fdata().astype(bool)
+    cp_mask_eroded = ndi.binary_erosion(cp_mask, iterations=1)
+    if cp_mask_eroded.sum() < 20:
+        print("CP erosion left too few voxels; using uneroded mask.")
+        cp_mask_eroded = cp_mask
 
     if not sn_mask.any() or not cp_mask.any():
         raise ValueError(f"Empty mask detected. SN voxels: {sn_mask.sum()} | CP voxels: {cp_mask.sum()}")
 
-    cp_values = nm_data[cp_mask]
+    cp_values = nm_data[cp_mask_eroded]
     cp_values = cp_values[np.isfinite(cp_values) & (cp_values > 0)]
+
     sn_values = nm_data[sn_mask]
     sn_values = sn_values[np.isfinite(sn_values) & (sn_values > 0)]
 
@@ -581,8 +801,7 @@ def extract_tractography_seed(
     cnr_data = np.zeros_like(nm_data)
     finite_nm_voxels = np.isfinite(nm_data)
     cnr_data[sn_mask & finite_nm_voxels] = (
-        nm_data[sn_mask & finite_nm_voxels] - cp_reference_intensity
-    ) / cp_reference_intensity
+        nm_data[sn_mask & finite_nm_voxels] - cp_reference_intensity) / cp_reference_intensity
     cnr_img = nib.Nifti1Image(cnr_data, nm_img.affine, nm_img.header)
 
     smoothed_cnr_img = smooth_img(cnr_img, fwhm=1.0)
@@ -602,10 +821,7 @@ def extract_tractography_seed(
         & (smoothed_cnr_data >= lower_cnr_bound)
         & (smoothed_cnr_data <= upper_cnr_bound)
     )
-    final_seed_mask = keep_largest_components(
-        candidate_seed_mask,
-        min_size=min_cluster_vox,
-        max_components=keep_components,
+    final_seed_mask = keep_largest_components(candidate_seed_mask, min_size=min_cluster_vox, max_components=keep_components,
     ).astype(np.uint8)
 
     cnr_out = os.path.abspath('Subject_CNR_Map_Smoothed.nii.gz')
@@ -618,19 +834,12 @@ def extract_tractography_seed(
     fig, ax = plt.subplots(figsize=(7, 4))
     ax.hist(cp_values, bins=histogram_bins, alpha=0.55, color='b', label='CP (background)', density=True)
     ax.hist(sn_values, bins=histogram_bins, alpha=0.55, color='y', label='SN (signal)', density=True)
-    ax.axvline(
-        cp_reference_intensity,
-        color='m',
-        lw=1.2,
-        ls='--',
-        label=f'CP mode = {cp_reference_intensity:.1f}',
-    )
+    ax.axvline(cp_reference_intensity, color='m', lw=1.2, ls='--', label=f'CP mode = {cp_reference_intensity:.1f}',)
     ax.set_title(
         f'SN vs CP intensities | CNR threshold = {lower_cnr_bound:.3f} | '
         f'mean SN CNR = {np.mean(smoothed_cnr_data[sn_mask]):.3f} | '
         f'seed voxels = {int(final_seed_mask.sum())}',
-        fontsize=9,
-    )
+        fontsize=9,)
     ax.set_xlabel('Voxel intensity', fontsize=9)
     ax.set_ylabel('Density', fontsize=9)
     ax.legend(fontsize=8)
@@ -640,7 +849,17 @@ def extract_tractography_seed(
     fig.savefig(hist_file, dpi=150, bbox_inches='tight')
     plt.close(fig)
 
-    return cnr_out, seed_out, hist_file
+    seed_diagnostics = {
+        'seed_voxels': int(final_seed_mask.sum()),
+        'search_roi_voxels': int(sn_mask.sum()),
+        'mean_search_region_cr': float(np.mean(sn_cnr_values)),
+    }
+    seed_diag_file = os.path.abspath('Seed_Diagnostics.json')
+    with open(seed_diag_file, 'w') as f:
+        json.dump(seed_diagnostics, f, indent=2)
+
+    return cnr_out, seed_out, hist_file, seed_diag_file
+
 
 def make_bias_corrected_reference(in_files):
     """Create the subject NM reference image from bias-corrected NM file(s)."""
@@ -709,21 +928,16 @@ def threshold_probability_mask(prob_atlas, threshold=0.25, label="ProbCIT_SNc"):
     return probability_out, mask_out
 
 
-def create_core_rim_nm_mask(
-    cnr_map,
-    native_sn_mask,
-    core_erosion_mm=1.0,
-    core_cnr_threshold=0.05,
-    rim_cnr_threshold=0.10,
-    min_cluster_vox=25,
-    keep_components=2,
+def create_core_rim_nm_mask(cnr_map, native_sn_mask, core_erosion_mm=1.0, core_cnr_threshold=0.05,
+    rim_cnr_threshold=0.10, min_cluster_vox=25, keep_components=2,
 ):
     """
     Create a stricter NM mask by treating the SN core and rim differently.
 
     The core is allowed to use a lower CNR threshold because it is spatially
     more trustworthy. The rim uses a higher CNR threshold because boundary
-    voxels are where false positives most often inflate HD95.
+    voxels are where false positives most often inflate HD95. One possible concern is the arbitrary 
+    choice of 1 mm for the core erosion
     """
     import os
     import json
@@ -816,6 +1030,7 @@ def compute_mask_qc(
     nms_atlas_mask=None,
     core_rim_nm_mask=None,
     manual_mask=None,
+    cnr_map=None,
 ):
     import os
     import json
@@ -912,6 +1127,19 @@ def compute_mask_qc(
         if not np.allclose(reference_img.affine, moving_img.affine, atol=1e-3):
             raise ValueError(f"Affine mismatch: {reference_label} and {moving_label} not in same space.")
 
+    def require_same_grid(reference_img, moving_img, reference_label, moving_label):
+        # Manual masks are drawn on the raw NM voxel grid, so only the grid must match.
+        # The world affine can differ when the source NM header was edited after the
+        # mask was drawn (e.g. sub-059 echo-1 carries a later sform_code=2 sform).
+        if reference_img.shape != moving_img.shape:
+            raise ValueError(
+                f"Shape mismatch: {reference_label} {reference_img.shape} vs "
+                f"{moving_label} {moving_img.shape}."
+            )
+        if not np.allclose(reference_img.header.get_zooms()[:3], moving_img.header.get_zooms()[:3], atol=1e-3):
+            raise ValueError(f"Voxel size mismatch: {reference_label} and {moving_label}.")
+        return float(np.abs(reference_img.affine - moving_img.affine).max())
+
     def pairwise_mask_metrics(mask_a, mask_b, img, spacing):
         a = mask_a.astype(bool)
         b = mask_b.astype(bool)
@@ -1002,6 +1230,7 @@ def compute_mask_qc(
         'centroid_core_rim_nm_mm': None,
         'centroid_distance_cnr_vs_core_rim_nm_mm': None,
         'n_voxels_manual': None,
+        'manual_affine_max_abs_diff': None,
         'dice_cnr_vs_manual': None,
         'hd95_cnr_vs_manual_mm': None,
         'dice_atlas_vs_manual': None,
@@ -1023,6 +1252,9 @@ def compute_mask_qc(
         'centroid_distance_nms_atlas_vs_manual_mm': None,
         'centroid_distance_core_rim_nm_vs_manual_mm': None,
         'centroid_distance_core_rim_nm_vs_nms_atlas_mm': None,
+        'core_median_cr': None,
+        'boundary_median_cr': None,
+        'boundary_over_core_median_cr_ratio': None,
         'pairwise': {
             'cnr_vs_atlas': pair_cnr_atlas,
         },
@@ -1118,7 +1350,38 @@ def compute_mask_qc(
     pair_anch_manual = None
     if manual_mask is not None and str(manual_mask).strip():
         man_img, man_data = load_mask(manual_mask)
-        require_same_space(cnr_img, man_img, 'CNR', 'manual')
+        manual_affine_diff = require_same_grid(cnr_img, man_img, 'CNR', 'manual')
+        if manual_affine_diff > 1e-3:
+            print(
+                f"WARNING: manual mask affine differs from CNR (max abs diff {manual_affine_diff:.3f}); "
+                "comparing on the shared voxel grid."
+            )
+        qc['manual_affine_max_abs_diff'] = manual_affine_diff
+        if cnr_map is not None and str(cnr_map).strip():
+            cnr_map_img = nib.load(cnr_map)
+            cnr_map_data = cnr_map_img.get_fdata()
+            require_same_space(cnr_img, cnr_map_img, 'CNR mask', 'CNR map')
+
+            core_erosion_mm = 1.0
+            boundary_band_mm = 1.0
+            dist_inside_mm = distance_transform_edt(man_data, sampling=spacing)
+            dist_outside_mm = distance_transform_edt(~man_data, sampling=spacing)
+            core_band = man_data & (dist_inside_mm > core_erosion_mm)
+            boundary_band = (
+                (man_data & (dist_inside_mm <= boundary_band_mm))
+                | (~man_data & (dist_outside_mm <= boundary_band_mm))
+            )
+            finite_cr = np.isfinite(cnr_map_data)
+            core_values = cnr_map_data[core_band & finite_cr]
+            boundary_values = cnr_map_data[boundary_band & finite_cr]
+
+            if core_values.size > 0 and boundary_values.size > 0:
+                qc['core_median_cr'] = float(np.median(core_values))
+                qc['boundary_median_cr'] = float(np.median(boundary_values))
+                qc['boundary_over_core_median_cr_ratio'] = (
+                    qc['boundary_median_cr'] / qc['core_median_cr']
+                    if qc['core_median_cr'] != 0 else None
+                )
 
         pair_cnr_manual = pairwise_mask_metrics(cnr_data, man_data, cnr_img, spacing)
         pair_atlas_manual = pairwise_mask_metrics(atlas_data, man_data, cnr_img, spacing)
@@ -1244,6 +1507,19 @@ def build_sn_roi_mask(cnr_seed, dilation_mm=6.0):
     nib.save(nib.Nifti1Image(roi_mask.astype(np.uint8), seed_img.affine, roi_header), roi_file)
     return roi_file
 
+def binarize_mask(prob_mask, threshold=0.5, out_name="Native_Binary_Mask.nii.gz"):
+    import os
+    import numpy as np
+    import nibabel as nib
+
+    img = nib.load(prob_mask)
+    data = img.get_fdata()
+    binary = (data >= float(threshold)).astype(np.uint8)
+    header = img.header.copy()
+    header.set_data_dtype(np.uint8)
+    out = os.path.abspath(out_name)
+    nib.save(nib.Nifti1Image(binary, img.affine, header), out)
+    return out
 
 # =================================================================
 # Phase 1: Forward Normalization
@@ -1258,17 +1534,19 @@ if run_phase1:
     inputnode = Node(IdentityInterface(fields=['subject_id']), name="NM_Subject_IDs")
     inputnode.iterables = [('subject_id', subjects)]
 
-    NM_Data = {'runs':'{subject_id}/anat/{subject_id}_acq-CombEchoNM*_GRE.nii.gz'}
+
+    # Input globs come from --cohort (or --nm_pattern/--t1_pattern); see resolve_input_patterns.
+    NM_Data = {'runs': nm_pattern}
     SelectNM = Node(SelectFiles(NM_Data, base_directory=str(design_dir)), name='SelectNM')
 
-    select_nm_image = Node(Function(input_names=["in_files", "strategy", "n"], 
-                                        output_names=["selected_files"],function=select_nm_image_files),
+    select_nm_image = Node(Function(input_names=["in_files", "strategy", "n"],
+                                        output_names=["selected_files"], function=select_nm_image_files),
                                         name="Select_NM_image_Files")
 
     select_nm_image.inputs.strategy = args.nm_image_strategy
     select_nm_image.inputs.n = args.nm_image_n
 
-    T1_Data = {'T1': '{subject_id}/anat/{subject_id}_acq-T1w.nii.gz'}
+    T1_Data = {'T1': t1_pattern}
     SelectT1 = Node(SelectFiles(T1_Data, base_directory=str(design_dir)), name='SelectT1')
 
     # =================================================================
@@ -1406,6 +1684,18 @@ if run_phase1:
     nm_to_mni.inputs.environ = safe_env  
 
     # =================================================================
+    # High-Resolution Solution
+    # =================================================================
+
+    if args.hires:
+        nm_to_mni_hires = Node(ApplyTransforms(), name='NM_to_MNI_HiRes')
+        nm_to_mni_hires.inputs.dimension = 3
+        nm_to_mni_hires.inputs.interpolation = 'LanczosWindowedSinc'
+        nm_to_mni_hires.inputs.reference_image = str(hires_ref_path)
+        nm_to_mni_hires.inputs.output_image = 'NM_MNI_res-05.nii'
+        nm_to_mni_hires.inputs.environ = safe_env
+
+    # =================================================================
     # NM-QC Plots
     # =================================================================
 
@@ -1434,7 +1724,7 @@ if run_phase1:
     # Saved outputs and where they end up in the output directory:
     # NM_MotPar/            - SPM realignment parameter files (.txt, one per run)
     # NM_MotionStats/       - Per-run motion stats JSON
-    # QC_RunComparison/     - Run 1 vs Run 2 difference image
+    # QC_RunComparison/     - Oerlay of selected realigned NM runs
     # NM_BiasCorr/          - Bias-corrected NM volumes (post-realignment, per volume)
     # NM_BiasCorr_Mean/     - Mean of bias-corrected volumes (used by Phase 2)
     # NM_Realigned_Mean/    - SPM mean image (pre-bias-correction, QC only)
@@ -1501,10 +1791,17 @@ if run_phase1:
     (nm_to_mni, datasink1, [('output_image', 'anat.@NM_to_MNI')]),
 
     # Transforms
-    (t1_to_mni, datasink1, [('composite_transform', 'transforms.@T1_to_MNI_Composite'),
-                            ('inverse_composite_transform', 'transforms.@T1_to_MNI_InvComposite')]),
-    (nm_to_t1, datasink1, [('composite_transform', 'transforms.@NM_to_T1_Composite'),
-                           ('inverse_composite_transform', 'transforms.@NM_to_T1_InvComposite')]),]   
+    (t1_to_mni, datasink1, [('composite_transform', 'transforms.T1_to_MNI_Composite'),
+                            ('inverse_composite_transform', 'transforms.T1_to_MNI_InvComposite')]),
+    (nm_to_t1, datasink1, [('composite_transform', 'transforms.NM_to_T1_Composite'),
+                           ('inverse_composite_transform', 'transforms.NM_to_T1_InvComposite')]),]   
+    if args.hires:
+        connections += [
+            (combine_forward, nm_to_mni_hires, [('combined_transforms', 'transforms')]),
+            (bias_mean_node,  nm_to_mni_hires, [('mean_image', 'input_image')]),
+            (nm_to_mni_hires, datasink1,       [('output_image', 'anat.@NM_to_MNI_HiRes')]),
+        ]
+    
     if do_smooth:
         connections += [
             (nm_to_mni, smooth, [('output_image', 'in_files')]),
@@ -1572,9 +1869,64 @@ if run_phase1:
     log.info(f"Group Average saved: {group_average_path}")
 
 # =================================================================
+# ITK-SNAP Interactive Segmentation on the V4 Template
+# =================================================================
+if run_segment and use_v4_drawing:
+    require_existing_file(group_average_path, "Group average NM template (run --stage 1 first)")
+    require_existing_file(hires_ref_path, "0.5 mm MNI T1 (shown behind V4 in ITK-SNAP)")
+
+    missing_hires = find_subjects_missing_hires(output_base)
+    if missing_hires:
+        raise FileNotFoundError("V4 needs a 0.5 mm NM_MNI_res-05.nii image for every subject. "
+                                f"Missing for: {missing_hires}. Re-run --stage 1 with --hires.")
+
+    drawing_dir.mkdir(parents=True, exist_ok=True)
+
+    # A rebuilt template would not match an existing tracing, so ask for it to be moved first.
+    if args.rebuild_template and os.path.exists(combined_mask):
+        raise ValueError(f"Move your existing tracing out of {trace_dir} before rebuilding the template.")
+
+    # Build V4 once (~35 min on the GPU), then shift it onto the group average (~15 s).
+    if args.rebuild_template or not v4_template.exists():
+        build_v4_template(project_root, output_base, v4_template)
+    else:
+        log.info(f"Using the existing V4 template: {v4_template}")
+
+    if args.rebuild_template or not v4_aligned_template.exists():
+        align_v4_to_group_average(v4_template, group_average_path, v4_aligned_template)
+    else:
+        log.info("V4 is already aligned to the group average.")
+
+    # Draw into a mask on the V4 grid: empty the first time, your saved tracing after that.
+    if not os.path.exists(combined_mask):
+        log.info(f"Creating an empty V4 mask at {combined_mask}")
+        create_blank_v4_mask(v4_aligned_template, combined_mask)
+    elif not images_share_grid(combined_mask, v4_aligned_template):
+        raise ValueError(f"{combined_mask} is not on the V4 drawing grid. Move it aside, or use --rebuild_template.")
+    else:
+        log.info(f"Existing V4 tracing found at {combined_mask}. Preserving Data")
+
+    label_file = trace_dir / "itksnap_labels.txt"
+    write_itksnap_label_file(label_file)
+
+    log.info(f"{'='*60}")
+    log.info("Manaul Segmentation Required (V4 template)...")
+    log.info("1. Cerebral Penducle (CP) - Background reference Region  -> label 1")
+    log.info("2. Substantia Nigra (SN) - NM signal region              -> label 2")
+    log.info("V4 opens cropped to the midbrain, so no navigation is needed.")
+    log.info(f"{'-'*60}")
+    log.info("Save your segmentation (Ctrl + S), then close the ITK-SNAP window to resume the pipeline.")
+    log.info(f"{'='*60}")
+    subprocess.run(['itksnap',
+                    '-g', str(v4_aligned_template),
+                    '-o', str(hires_ref_path),
+                    '-s', combined_mask,
+                    '-l', str(label_file)])
+
+# =================================================================
 # ITK-SNAP Interactive Segmentation
 # =================================================================
-if run_segment:
+if run_segment and not use_v4_drawing:
     if not os.path.exists(combined_mask):
         log.info(f"Generating blank placeholder mask at {combined_mask}")
         t1_img = nib.load(str(t1_brain_template))
@@ -1592,7 +1944,8 @@ if run_segment:
     xml_data = xml_data.replace("TARGET_NM_PATH", group_average_path)
     xml_data = xml_data.replace("TARGET_MASK_PATH", combined_mask)
 
-    workspace_path = project_root / "workflow" / "workspace" / "Automated_Setup.itksnap"
+    # Written under the output root: it is a generated file and embeds run-specific paths.
+    workspace_path = output_base / "Automated_Setup.itksnap"
     with open(workspace_path, 'w') as f:
         f.write(xml_data)
 
@@ -1608,6 +1961,7 @@ if run_segment:
     log.info(f"{'='*60}")
     subprocess.run(['itksnap', '-w', workspace_path])
 
+if run_segment:
     combo_img = nib.load(combined_mask)
     combo_data = combo_img.get_fdata()
     if np.max(combo_data) == 0:
@@ -1628,6 +1982,10 @@ if run_segment:
 # Phase 2: Inverse Normalization and Seeds
 # =================================================================
 if run_phase2:
+    if use_v4_drawing and not images_share_grid(SN_mask, v4_aligned_template):
+        raise ValueError(f"{SN_mask} is not on the V4 drawing grid. Re-run --stage segment.")
+    log.info(f"Stage 2 drawing masks: SN={SN_mask} | CP={CP_mask}")
+
 
     wf2 = Workflow(name="NeuroMelAnchor_Phase2")
     wf2.base_dir = str(work_dir)
@@ -1743,7 +2101,7 @@ if run_phase2:
     # Compute CNR + Tractography Seed
     # =================================================================
     cnr_seed = Node(Function(input_names=['nm_image', 'native_sn_mask', 'native_cp_mask', 'cnr_floor', 'cnr_percentile', 'min_cluster_vox', 'keep_components'], 
-                            output_names=['cnr_out', 'seed_out', 'histogram'], function=extract_tractography_seed), name='CNR_Seed')
+                            output_names=['cnr_out', 'seed_out', 'histogram', 'seed_diagnostics'], function=extract_tractography_seed), name='CNR_Seed')
     cnr_seed.inputs.cnr_floor = seed_cnr_floor
     cnr_seed.inputs.cnr_percentile = seed_cnr_percentile
     cnr_seed.inputs.min_cluster_vox = seed_min_cluster_voxels
@@ -1830,6 +2188,7 @@ if run_phase2:
         'nms_atlas_mask',
         'core_rim_nm_mask',
         'manual_mask',
+        'cnr_map',
     ]
     qc_node = Node(
         Function(
@@ -1881,7 +2240,7 @@ if run_phase2:
         (mni_to_nm_sn,      cnr_seed, [('output_image', 'native_sn_mask')]),
         (mni_to_nm_cp,      cnr_seed, [('output_image', 'native_cp_mask')]),
 
-        (cnr_seed,          qc_node, [('seed_out','cnr_mask')]), 
+        (cnr_seed,          qc_node, [('seed_out','cnr_mask'), ('cnr_out', 'cnr_map')]), 
         (mni_to_nm_atlas,   qc_node, [('output_image', 'atlas_mask')]),
 
         (cnr_seed,          roi_mask_node, [('seed_out', 'cnr_seed')]),
@@ -1905,7 +2264,8 @@ if run_phase2:
         (mni_to_nm_atlas,   datasink2, [('output_image', 'anat.@Native_Atlas_Mask')]),
         (cnr_seed,          datasink2, [('cnr_out', 'cnr.@CNR_Map'),
                                         ('seed_out', 'anat.@NM_Defined_Mask'),
-                                        ('histogram', 'qc.@CNR_Histogram')]),
+                                        ('histogram', 'qc.@CNR_Histogram'),
+                                        ('seed_diagnostics', 'cnr.@Seed_Diagnostics')]),
         (qc_node,           datasink2, [('qc_file', 'cnr.@SN_Mask_Dice_QC')]),
     ]
 
@@ -2665,7 +3025,14 @@ def run_group_qc_stage(output_path, manual_dir, selected_subjects, test_mode=Fal
             subject_qc = json.load(qc_json_file)
 
         subject_id = qc_json_path.parts[-3]
+
+        seed_diag_path = qc_json_path.parent / "Seed_Diagnostics.json"
+        if seed_diag_path.exists():
+            with open(seed_diag_path, "r") as seed_diag_file:
+                subject_qc.update(json.load(seed_diag_file))
+
         subject_records.append((subject_id, subject_qc))
+
 
         manifest_json = build_stage2_output_manifest(subject_id, output_path, manual_dir)
         if manifest_json is not None:
@@ -2965,6 +3332,76 @@ def run_group_qc_stage(output_path, manual_dir, selected_subjects, test_mode=Fal
             fig3.savefig(str(out3), dpi=200, bbox_inches='tight')
             plt.close(fig3)
             log.info(f"Deviation boxplots saved: {out3}")
+
+    coupling_pairs = [
+        (
+            sid,
+            finite_float(subject_qc.get('seed_voxels')),
+            finite_float(subject_qc.get('search_roi_voxels')),
+            finite_float(subject_qc.get('mean_search_region_cr')),
+        )
+        for sid, subject_qc in subject_records
+    ]
+    coupling_pairs = [
+        (sid, seed, roi, signal) for sid, seed, roi, signal in coupling_pairs
+        if seed is not None and roi is not None and signal is not None
+    ]
+
+    if len(coupling_pairs) > 2:
+        seed_arr = np.array([seed for _, seed, _, _ in coupling_pairs])
+        roi_arr = np.array([roi for _, _, roi, _ in coupling_pairs])
+        signal_arr = np.array([signal for _, _, _, signal in coupling_pairs])
+
+        r_roi = float(np.corrcoef(seed_arr, roi_arr)[0, 1])
+        r_signal = float(np.corrcoef(seed_arr, signal_arr)[0, 1])
+
+        fig5, axes5 = plt.subplots(1, 2, figsize=(10.5, 4.5))
+
+        axes5[0].scatter(roi_arr, seed_arr, s=34, alpha=0.85, color='#4C72B0')
+        axes5[0].set_xlabel('Search ROI size (voxels, = warped atlas)')
+        axes5[0].set_ylabel('Seed size (voxels)')
+        axes5[0].set_title(f'Seed size vs atlas ROI size\nr = {r_roi:.2f}')
+        axes5[0].spines[['top', 'right']].set_visible(False)
+
+        axes5[1].scatter(signal_arr, seed_arr, s=34, alpha=0.85, color='#E1812C')
+        axes5[1].set_xlabel('Mean NM contrast in search region')
+        axes5[1].set_ylabel('Seed size (voxels)')
+        axes5[1].set_title(f'Seed size vs NM signal strength\nr = {r_signal:.2f}')
+        axes5[1].spines[['top', 'right']].set_visible(False)
+
+        fig5.suptitle('Seed size tracks the atlas ROI far more than it tracks NM signal', fontsize=11)
+        fig5.tight_layout()
+
+        out5 = group_qc_output_path('Group_QC_Seed_Atlas_Coupling.png')
+        fig5.savefig(str(out5), dpi=200, bbox_inches='tight')
+        plt.close(fig5)
+        log.info(f"Seed/atlas coupling plot saved: {out5}")
+
+    boundary_pairs = paired_metric_rows('core_median_cr', 'boundary_median_cr')
+    if boundary_pairs:
+        core_vals = np.array([core for _, core, _ in boundary_pairs])
+        boundary_vals = np.array([boundary for _, _, boundary in boundary_pairs])
+        lim_min = float(min(core_vals.min(), boundary_vals.min(), 0.0))
+        lim_max = float(max(core_vals.max(), boundary_vals.max()))
+
+        fig6, ax6 = plt.subplots(figsize=(5.5, 5))
+        ax6.scatter(core_vals, boundary_vals, s=34, alpha=0.85, color='#4C72B0')
+        ax6.plot([lim_min, lim_max], [lim_min, lim_max], ls='--', lw=1.0, color='gray',
+                 label='Boundary CR = Core CR')
+        ax6.set_xlim(lim_min, lim_max)
+        ax6.set_ylim(lim_min, lim_max)
+        ax6.set_xlabel('Median CR — mask interior (>1mm from manual edge)')
+        ax6.set_ylabel('Median CR — manual boundary band (±1mm)')
+        ax6.set_title('If the boundary were an NM-intensity feature,\npoints would fall well below the diagonal')
+        ax6.legend(fontsize=9, loc='lower right')
+        ax6.spines[['top', 'right']].set_visible(False)
+        fig6.tight_layout()
+
+        out6 = group_qc_output_path('Group_QC_Boundary_vs_Core_CR.png')
+        fig6.savefig(str(out6), dpi=200, bbox_inches='tight')
+        plt.close(fig6)
+        log.info(f"Boundary-vs-core CR plot saved: {out6}")
+
 
 
 if run_group_qc:
