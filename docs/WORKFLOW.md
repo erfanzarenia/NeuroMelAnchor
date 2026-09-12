@@ -1,159 +1,134 @@
 # Workflow
 
----
-
-## Overview
-
-The workflow begins with the preparation of neuromelanin-sensitive (NM)-MRI images. Next, a group-level reference representation is constructed, followed by atlas-based initialization. The process integrates anatomical priors from atlas data with subject-level NM-MRI signal contrast to generate individualized region maps. The pipeline begins with preprocessing and normalization of NM-MRI images (Stage 1), continues with manual ROI definition on the group-average NM template using ITK-SNAP, and concludes with subject-level refinement and evaluation (Stage 2). Evaluation metrics provide quantitative measures of how well generated segmentations correspond to reference representations (manual or atlas-based).
+What each processing step does and why. For how to run them, see
+[USAGE.md](USAGE.md).
 
 ---
 
-## Conceptual Pipeline
+## The problem
 
-The workflow proceeds through a clear sequence of stages combining normalization, manual definition, refinement, and quantitative evaluation.
+The substantia nigra is small, has no reliable boundary on a T1-weighted image,
+and varies in position and shape between people. An atlas mask warped into a
+subject's space inherits every error of that warp, and the errors are large
+relative to the structure.
 
-1. Provide NM-MRI and T1-weighted MRI images
-2. **Stage 1 — Forward Normalization**
-   - Preprocess NM images: motion correction, bias correction, intensity normalization
-   - Align NM → T1 and T1 → MNI space
-   - Build a group-average NM template for the study
-3. **Segment — Manual ROI Definition (ITK-SNAP)**
-   - Define cerebral peduncle (CP) and substantia nigra (SN) masks on the group NM template
-   - Save results as the study-level reference representation
-4. **Stage 2 — Inverse Normalization & CNR Seed Extraction**
-   - Warp SN/CP masks from template back to native NM space
-   - Compute CNR map and NM-based seed mask
-   - Anchor MNI atlas to NM-derived regions
-   - Evaluate segmentation using Dice and Hausdorff distance
+NM-MRI gives a subject-specific intensity cue, but thresholding it directly is
+also unreliable: absolute NM intensity varies with coil loading, sequence and
+subject, so a threshold tuned on one scan means something different on the next.
 
----
-
-## Stage 1 — Forward Normalization
-
-This stage standardizes NM-MRI data across subjects to establish a common spatial reference and produces the group-level NM template.
+NeuroMelAnchor separates the two sources of information. The **shape prior**
+comes from a group-level template on which SN and CP are traced once. The
+**intensity evidence** comes from each subject's own NM signal, expressed as
+contrast against the cerebral peduncle — adjacent white matter with no
+neuromelanin. Taking the ratio removes the scanner-to-subject scaling, so a CNR
+threshold means the same thing everywhere.
 
 ---
 
-### Step 1. Input Image
+## Stage 1 — forward normalization
 
-The pipeline uses neuromelanin-sensitive MRI scans and a T1-weighted image per subject. NM-MRI provides contrast related to neuromelanin concentration, crucial for visualizing the SN.
+Goal: get every subject into a common space, and build the group template the
+tracing will be drawn on.
 
-> **Output:** NM-MRI image and T1 suitable for preprocessing.
+1. **Gunzip** — SPM cannot read compressed NIfTI.
+2. **Realign (SPM)** — motion-correct the NM acquisitions to their mean. Also
+   yields the realignment parameters used for motion QC.
+3. **N4 bias field correction (ANTs)** — per realigned volume. NM images have
+   strong receive-coil shading, which would otherwise dominate any intensity
+   comparison between SN and CP.
+4. **Average** — mean of the bias-corrected volumes becomes the subject NM
+   reference (`--nm_image_strategy first` keeps only the first instead).
+5. **Brain extraction (ANTs)** — on the T1.
+6. **T1 → MNI (ANTs, rigid + affine + SyN)** — *brainstem-weighted*: the cost is
+   weighted by `HarvardOxford/Brainstem.nii.gz` so the warp is driven by the
+   midbrain rather than by cortex, which is what a whole-brain registration would
+   optimize at the midbrain's expense.
+7. **NM → T1 (ANTs, rigid)** — rigid only. NM and T1 are the same brain in the
+   same session; anything more would let the registration absorb real anatomy.
+8. **Compose transforms** — NM→T1 and T1→MNI are concatenated so NM reaches MNI
+   in a single resampling, avoiding a second interpolation.
+9. **Smooth (SPM, optional)** — off by default (`--smooth 0`).
+10. **QC** — registration overlays, between-run similarity, motion statistics.
+11. **Group-average NM template** — mean of the normalized NM images.
 
----
-
-### Step 2. Preprocessing of NM-MRI
-
-Preprocessing ensures intensity and spatial consistency across runs and subjects. Procedures include:
-
-1. Gunzip NM volumes (if compressed)
-2. SPM Realign — motion correction and registration to mean
-3. ANTs `N4BiasFieldCorrection` on each realigned volume
-4. Compute mean of bias-corrected NM volumes
-5. ANTs `BrainExtraction` on T1
-6. ANTs Registration (T1 → MNI) — Rigid + Affine + SyN (brainstem-weighted)
-7. ANTs Registration (NM → T1) — Rigid
-8. Combine transforms and apply to map NM → MNI space
-9. *(Optional)* SPM Smooth
-10. Generate QC plots and motion metrics
-
-These operations ensure spatial comparability across subjects, creating standardized input for localization.
-
-> **Output:** Preprocessed NM-MRI images in MNI space.
-
----
-
-### Step 3. Group-Level Average in MNI Space
-
-All normalized NM images are combined to construct a group-level NM-MRI template, capturing common neuromelanin signal patterns across subjects.
-
-> **Output:** `Study_Specific_NM_Template.nii.gz`
-
-This template becomes the visual and spatial basis for defining the SN reference region in the next stage.
+With `--hires`, the saved transforms are reapplied to a 0.5 mm grid to give
+`NM_MNI_res-05.nii`. At 1 mm the SN is only a few voxels across, so the finer
+grid matters for the tracing.
 
 ---
 
-## Segment — Manual ROI Definition (ITK-SNAP)
+## Stage segment — the drawing template and the tracing
 
-Manual segmentation defines a study-level anatomical reference that anchors later subject-specific processing.
+Goal: one careful tracing, on the sharpest possible image.
 
----
+The plain group average is blurred by residual misregistration — it averages
+subjects that are only approximately aligned. So by default the pipeline builds a
+**V4 midbrain template** with FireANTs: an iterative template construction
+restricted to the midbrain, at 0.5 mm, with shape averaging damped by a gradient
+step of 0.25 (the same damping `antsMultivariateTemplateConstruction2.sh` uses,
+rather than applying the full averaged correction each round). Subjects are
+cropped to the midbrain using the BrainstemNavigator-derived prior and aligned by
+their bilateral SN centroids before the iterations start.
 
-### Step 4. ITK-SNAP Initialization for Group-Level Segmentation
+The template is then rigidly shifted (about 1.3 mm) onto the group average, so a
+mask drawn on it lands correctly when Stage 2 registers subjects to that average.
+The shift introduces no stretching and keeps V4's 0.5 mm grid.
 
-- Open `Study_Specific_NM_Template` in ITK-SNAP
-- Label two regions:
-  - **Label 1:** Cerebral Peduncle (CP)
-  - **Label 2:** Substantia Nigra (SN)
-- Save the masks to `resources/tpl-MNI152NLin2009cAsym/`
+ITK-SNAP then opens with V4 in the foreground and the 0.5 mm MNI T1 behind it.
+**CP is label 1, SN is label 2.** See
+[MANUAL_SEGMENTATION.md](MANUAL_SEGMENTATION.md).
 
-The resulting binary masks serve as study-level reference regions guiding all subject-level analyses.
+`--drawing_template naive` skips all of this and traces on the plain group mean —
+no GPU or container needed, at the cost of a blurrier target.
 
-> **Output:** CP and SN reference masks in MNI space.
-
----
-
-## Stage 2 — Inverse Normalization and CNR Seed Extraction
-
-Stage 2 uses inverse transformations to project reference regions into each subject's native space, refines alignment using neuromelanin signal, and evaluates segmentation accuracy.
-
----
-
-### Step 5. Atlas Initialization
-
-An atlas-based prior (from FSL brainstem atlas) provides an initial estimate of SN location in each subject, constraining the search space to plausible anatomy.
-
-> **Output:** Initial subject-specific region estimate.
+This stage runs **once per dataset**. The tracing is preserved across reruns, and
+`--rebuild_template` refuses to proceed while a tracing exists, since a rebuilt
+template would no longer match it.
 
 ---
 
-### Step 6. Neuromelanin-Guided Refinement
+## Stage 2 — inverse normalization and CNR seeding
 
-Subject-specific NM-contrast is used to adjust and refine the atlas-derived region. Neuromelanin intensity reflects dopaminergic neuron density, enabling fine-grained localization.
+Goal: turn the group tracing plus each subject's NM signal into a subject-specific
+mask, then measure how much that differs from the alternatives.
 
-> **Output:** Refined subject-specific mask aligned to NM signal.
-
----
-
-### Step 7. Segmentation Map Generation
-
-The refined region is converted into a segmentation representation — either:
-
-- **Binary mask:** hard boundary of the SN
-- **Probabilistic map:** voxel-wise likelihood of membership, preserving uncertainty
-
-> **Output:** Segmentation representation (`*_SN_mask.nii.gz`).
-
----
-
-### Step 8. Comparison with Reference Representation
-
-Generated segmentation maps are compared to available references:
-
-- Manual SN mask (if provided)
-- Atlas-derived reference (when manual not available)
-
-> **Output:** Paired representations ready for quantitative evaluation.
-
----
-
-### Step 9. Metric Computation
-
-Quantitative metrics characterize agreement between segmented and reference masks:
-
-- **Dice Similarity Coefficient:** spatial overlap
-- **Hausdorff Distance (HD95):** boundary difference
-
-These metrics provide complementary views of spatial accuracy and boundary agreement.
-
-> **Output:** Evaluation scores (per-subject JSON), aggregate QC plots (Dice & HD distributions).
+1. **Subject → group template (ANTs, rigid + affine + SyN)** — a direct NM-to-NM
+   registration, not reused from Stage 1. Both images are the same contrast,
+   which is a far better-posed problem than the NM-to-T1-to-MNI chain.
+2. **Warp SN and CP to native NM space** — using the inverse transform, so the
+   subject's data is never resampled.
+3. **Compute the CNR map** — the CP intensity mode is estimated with a kernel
+   density estimate (the mode, not the mean, because the CP distribution is
+   skewed by partial-volume voxels at its edges), then
+   `CNR = (NM − CP_mode) / CP_mode` within the SN search region. The map is
+   lightly smoothed before thresholding.
+4. **Extract the NM seed** — voxels above both an absolute CNR floor (5%, so a
+   voxel must be genuinely brighter than white matter) and a subject-adaptive
+   percentile within the search region (so subjects with globally weaker NM
+   contrast are not systematically under-segmented). Components smaller than 15
+   voxels are dropped and only the largest two are kept — left and right SN.
+5. **Core-rim variant** — the same idea with the eroded core and the boundary rim
+   thresholded separately. The core is spatially more trustworthy, so it uses the
+   liberal threshold; the rim uses a stricter one, because boundary false
+   positives are what inflate HD95.
+6. **Anchored atlas** — the CIT168 atlas is rigidly re-registered onto the
+   subject's own NM seed within a dilated ROI. This asks a different question
+   from the others: keep the atlas *shape*, but let the subject's NM signal say
+   where it belongs.
+7. **Probabilistic atlases** — CIT168 and NMS probabilistic SNc are warped to
+   native space and thresholded, giving two further comparators.
+8. **QC** — all pairwise metrics, voxelwise disagreement maps and a per-subject
+   dashboard.
 
 ---
 
-## Workflow Diagram
-```
-NM-MRI → preprocessing → group-level reference construction →
-study-specific reference definition → atlas prior initialization →
-neuromelanin-guided refinement → segmentation representation
-(binary or probabilistic) → evaluation relative to reference representation
-```
+## Group QC
+
+Aggregates the per-subject metrics into raincloud plots of Dice, dot plots of
+HD95, deviation box plots, a method comparison, seed/atlas coupling and a
+boundary-versus-core contrast plot, plus flat CSVs for group statistics.
+
+It reads only existing Stage 2 outputs, so `--stage group_qc` is the cheap way to
+regenerate summaries after a plotting change.
+
+See [EVALUATION.md](EVALUATION.md) for how to read them.

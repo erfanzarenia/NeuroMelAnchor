@@ -1,82 +1,89 @@
 # Manual Segmentation
 
----
-
-## Purpose
-
-This document defines the role of manual segmentation within the NeuroMelAnchor workflow. Manual segmentation provides a reference representation of the substantia nigra used for quantitative evaluation of automated segmentation outputs.
+The one interactive step in the pipeline: tracing SN and CP on the group
+template. Done **once per dataset**, not per subject.
 
 ---
 
-## What Manual Segmentation Represents
+## Why two regions
 
-Manual segmentation refers to a binary mask of the substantia nigra created through expert-guided delineation. The mask encodes the spatial extent of the structure based on anatomical judgment applied to neuromelanin-sensitive MRI data.
+**Substantia nigra (label 2)** is the target — but it also defines the search
+region within which each subject's CNR is evaluated. Trace it generously enough
+that no subject's true SN falls outside it; the CNR threshold does the
+tightening. A tracing that clips the SN cannot be recovered downstream.
 
-The representation:
-
-- Is a voxel-wise binary mask
-- Indicates presence or absence of the substantia nigra
-- Is defined in the same space as the preprocessed neuromelanin-sensitive MRI (MNI space)
-
----
-
-## Why Manual Segmentation Is Used
-
-Manual segmentation serves as a reference representation for evaluating the accuracy of the automated segmentation produced by NeuroMelAnchor. It enables:
-
-- Quantitative assessment of segmentation quality
-- Validation of subject-specific localization
-- Comparison across subjects and datasets
+**Cerebral peduncle (label 1)** is the background reference. It is white matter
+immediately adjacent to SN with no neuromelanin, so it provides the intensity
+baseline the CNR is measured against. Every subject-level threshold depends on
+it, so place it in clean, homogeneous peduncle — away from the SN border, away
+from partial-volume voxels at the peduncle edge, and away from any visible
+artefact.
 
 ---
 
-## Assumptions
+## Running it
 
-- Manual segmentation is created on preprocessed data
-- Manual segmentation is aligned with the neuromelanin-sensitive MRI in MNI space
-- Manual segmentation is treated as a reference representation for evaluation
-- Variability in manual delineation may exist across raters or datasets
+```bash
+python workflow/scripts/neuromelanchor_pipeline.py ... --stage segment
+```
 
----
+With the default `--drawing_template v4` the pipeline builds the V4 midbrain
+template (~35 minutes on a GPU), aligns it to the group average, and opens
+ITK-SNAP with:
 
-## Role in the Pipeline
+- **Main image** — the V4 template at 0.5 mm, already cropped to the midbrain, so
+  no navigation is needed
+- **Overlay** — the 0.5 mm MNI T1, for anatomical orientation
+- **Segmentation** — an empty mask on the V4 grid, or your existing tracing
+- **Label file** — `itksnap_labels.txt`, with label 1 and 2 named for you
 
-Manual segmentation is incorporated during the evaluation stage of the workflow. Its role includes:
-
-- Acting as the reference representation when available
-- Enabling computation of similarity metrics
-- Supporting interpretation of segmentation quality
-
-**Reference hierarchy within the pipeline:**
-
-- Manual segmentation when available
-- Atlas-derived representation otherwise
+With `--drawing_template naive` the plain group mean opens through an ITK-SNAP
+workspace instead. That view is not pre-cropped, so jump to the midbrain by
+typing `98 109 61` into the Cursor Position box, click *zoom to fit*, and zoom in.
 
 ---
 
-## How Manual Segmentation Is Used
+## Protocol
 
-Manual segmentation enters the pipeline as an input mask and is used during comparison with the generated segmentation. Processing steps:
-
-1. Input manual segmentation mask
-2. Align with generated segmentation representation (same space assumed)
-3. Perform voxel-wise comparison
-4. Compute similarity metrics
-
----
-
-## Metric Computation
-
-Manual segmentation is used to compute quantitative evaluation metrics describing agreement with the automated segmentation.
-
-**Metrics:**
-- **Dice similarity coefficient** — overlap-based measure
-- **Hausdorff distance** — boundary-based measure
-
-> **Output:** numerical values describing agreement between automated and manual segmentation, produced at the subject level.
+1. Work in the axial view; use coronal and sagittal to confirm.
+2. Move through slices until the SN is visible as the bright band
+   posterolateral to the cerebral peduncle.
+3. Trace **SN as label 2**, bilaterally, following the bright band. Prefer
+   slightly generous over slightly tight.
+4. Trace **CP as label 1**, bilaterally, in the body of the peduncle — not at its
+   border with SN.
+5. Check all three planes for stray voxels.
+6. **Ctrl+S** to save, then close ITK-SNAP. The pipeline resumes automatically.
 
 ---
 
-## Summary
+## What the pipeline checks
 
-Manual segmentation functions as a reference representation within NeuroMelAnchor. It supports quantitative evaluation of segmentation outputs through comparison and metric computation, enabling assessment of localization accuracy at the subject level.
+On resuming it splits the combined label volume into the SN and CP masks and
+refuses to continue if:
+
+- the saved mask is empty — ITK-SNAP was closed without saving
+- either region has **fewer than 50 voxels** — almost always a partial tracing
+
+Both errors are recoverable: re-run `--stage segment` and the existing tracing is
+reopened rather than discarded.
+
+---
+
+## Reruns and rebuilds
+
+The tracing is written to `<output_root>/manual_trace_v4/` (or `manual_trace/`
+for `naive`) and reused by every later run. Two guards protect it:
+
+- `--rebuild_template` refuses to run while a tracing exists, because a rebuilt
+  template would no longer match it. Move the tracing aside first.
+- If the saved mask is not on the current V4 grid, the pipeline stops rather than
+  silently resampling a tracing onto a template it was not drawn on.
+
+---
+
+## Per-subject manual masks
+
+Distinct from this step. Optional per-subject SN tracings in **native NM space**,
+passed with `--manual_dir`, are used only for evaluation — they never feed back
+into segmentation. See [DATA_SPECIFICATION.md](DATA_SPECIFICATION.md).

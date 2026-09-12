@@ -1,88 +1,142 @@
-# Install
+# Installation
+
+The pipeline orchestrates external neuroimaging programs through Nipype. The
+Python packages are the easy part; ANTs, SPM12 and ITK-SNAP must be installed
+separately and be visible on `PATH`.
 
 ---
 
-## NeuroMelAnchor Installation Guide
+## Requirements
 
-This document describes how to install and configure all dependencies required to run the NeuroMelAnchor pipeline.
+| Component | Needed for | Notes |
+|---|---|---|
+| Python ≥ 3.9 | everything | Developed on 3.12 |
+| **ANTs** | stages 1, 2, segment | Registration, brain extraction, N4 |
+| **MATLAB + SPM12** | stage 1 | Realignment and optional smoothing |
+| **ITK-SNAP** | stage segment | Manual tracing |
+| FireANTs + CUDA GPU | stage segment (`--drawing_template v4`) | Normally supplied by a container, see below |
+| FSL + MRtrix3 | `workflow/tools/fit_r2star.py` only | Not needed by the pipeline |
 
----
-
-## Overview
-
-NeuroMelAnchor depends on a combination of Python libraries and neuroimaging software:
-
-- Python (≥ 3.9)
-- `requirements.txt`
-- ANTs (Advanced Normalization Tools)
-- SPM12 (via MATLAB)
-- ITK-SNAP
-
----
-
-## System Requirements
-
-- **OS:** Linux or macOS (recommended)
-- **RAM:** ≥ 16 GB (32 GB recommended)
-- **CPU:** ≥ 8 cores recommended
-- **Storage:** ≥ 50 GB
+Hardware: ≥ 16 GB RAM (32 GB recommended), ≥ 8 cores, and a lot of disk — the
+Nipype work directory dwarfs the outputs. A CUDA GPU is needed only for the V4
+drawing template; `--drawing_template naive` avoids it.
 
 ---
 
-## 1. Create Python Environment
+## 1. Python environment
 
-We recommend using **conda**:
 ```bash
-conda create -n neuromelanchor python=3.9
-conda activate neuromelanchor
-```
-
----
-
-## 2. Install Python Dependencies
-
-From the repository root:
-```bash
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
----
+or with conda:
 
-## 3. Install ANTs
+```bash
+conda create -n neuromelanchor python=3.12 && conda activate neuromelanchor
+pip install -r requirements.txt
+```
 
-Download ANTs from: https://github.com/ANTsX/ANTs
+`requirements.txt` is pinned from the environment used for the September 2026
+runs. It deliberately excludes `fireants` and `torch` — see step 5.
 
-After installation, set environment variables:
+## 2. ANTs
+
+Install from https://github.com/ANTsX/ANTs, then:
+
 ```bash
 export ANTSPATH=/path/to/ants/bin
 export PATH=$ANTSPATH:$PATH
-```
-
-Verify installation:
-```bash
 antsRegistration --version
 ```
 
+The pipeline checks for `antsRegistration` at startup and refuses to run without
+it, rather than failing hours in.
+
+## 3. MATLAB and SPM12
+
+Install SPM12 and add it to the MATLAB path. The pipeline checks for `matlab` on
+`PATH` for Stage 1. If Nipype does not find SPM, set:
+
+```bash
+export MATLAB_CMD="matlab -nodesktop -nosplash"
+```
+
+## 4. ITK-SNAP
+
+Install from https://www.itksnap.org and ensure `itksnap` is on `PATH` — the
+pipeline launches it directly for `--stage segment`.
+
+## 5. FireANTs (optional, for the V4 drawing template)
+
+The template builders need `fireants` and a CUDA-capable `torch`. Rather than
+installing these into the pipeline environment, the pipeline looks for a
+container and runs the builder inside it. At startup it tries, in order:
+
+1. `fireants.sif` in `--project_root` with `singularity`
+2. `fireants.sif` in `--project_root` with `apptainer`
+3. a local `fireants` Docker image
+
+If none is found it falls back to the current Python interpreter and warns. To
+run the builders without a container:
+
+```bash
+pip install fireants==1.5.0 torch==2.12.0
+```
+
+To skip this machinery entirely, use `--drawing_template naive`.
+
+## 6. TemplateFlow
+
+MNI references are fetched through TemplateFlow on first use. Set a cache
+location if the default is not writable:
+
+```bash
+export TEMPLATEFLOW_HOME=/path/to/templateflow
+```
+
+## 7. Generate the 0.5 mm MNI reference
+
+Required by `--hires` and by the V4 drawing template. It is derived, so it is not
+committed:
+
+```bash
+python workflow/tools/resample_mni_reference.py \
+    --out-dir resources/tpl-MNI152NLin2009cAsym
+```
+
 ---
 
-## 4. Install MATLAB + SPM12
+## Verify the installation
 
-NeuroMelAnchor uses SPM for motion correction and smoothing.
+```bash
+pip install pytest
+cd tests && python -m pytest
+```
+
+These checks need none of the external software — they confirm the repository is
+intact, the scripts parse, the resources are in place and the numeric helpers
+behave. Passing them does **not** mean ANTs, SPM and ITK-SNAP are correctly
+installed; for that, run one subject:
+
+```bash
+python workflow/scripts/neuromelanchor_pipeline.py \
+  --project_root . --design_dir /path/to/bids --output_root /path/to/out \
+  --work_dir /path/to/work --stage 1 --test
+```
 
 ---
 
-## 5. Troubleshooting
+## Troubleshooting
 
-- **ANTs not found** → Check `ANTSPATH` and `PATH`
-- **SPM not detected** → Verify MATLAB path and `MATLAB_CMD`
-- **TemplateFlow download issues** → Set `TEMPLATEFLOW_HOME`
-- **Memory errors** → Reduce `--n_procs` in pipeline execution
+| Symptom | Fix |
+|---|---|
+| `ANTs not found on path` | Export `ANTSPATH` and add it to `PATH` |
+| `Matlab not found on path` | MATLAB not on `PATH`; check SPM12 is on the MATLAB path |
+| `ITK-SNAP not found on PATH` | Install ITK-SNAP, or run a stage other than `segment` |
+| TemplateFlow download failures | Set `TEMPLATEFLOW_HOME` to a writable path |
+| `0.5 mm MNI reference not found` | Run step 7 |
+| `No module named fireants` | Provide a container, or install fireants and torch, or use `--drawing_template naive` |
+| Out-of-memory during registration | Lower `--n_procs`; ITK threads are capped at `min(n_procs, 8)` |
 
----
-
-## 6. Next Steps
-
-After installation:
-
-- ➡️ See `DATA_SPECIFICATION.md` to prepare input data
-- ➡️ See `USAGE.md` to understand the pipeline
+Next: [DATA_SPECIFICATION.md](DATA_SPECIFICATION.md), then [USAGE.md](USAGE.md).
