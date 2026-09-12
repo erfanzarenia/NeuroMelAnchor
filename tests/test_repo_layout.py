@@ -6,6 +6,7 @@ actually suffered: resources drifting away from the paths the pipeline hard-code
 site-specific absolute paths creeping back into scripts, and generated files being
 committed.
 """
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -101,7 +102,17 @@ def test_generated_workspace_not_committed():
 
 
 def test_no_committed_bytecode():
-    assert not list(REPO_ROOT.rglob("__pycache__")), "__pycache__ directories present"
+    """
+    No compiled bytecode is tracked by Git.
+
+    Checked against the index rather than the working tree, since running these
+    tests creates tests/__pycache__ itself. .gitignore keeps it untracked.
+    """
+    tracked = subprocess.run(["git", "ls-files"], cwd=REPO_ROOT,
+                             capture_output=True, text=True, check=True).stdout.split()
+    offenders = [name for name in tracked
+                 if "__pycache__" in name or name.endswith((".pyc", ".pyo"))]
+    assert not offenders, f"compiled bytecode tracked by Git: {offenders}"
 
 
 def test_single_requirements_file():
