@@ -1,0 +1,41 @@
+# Byte-compiled / optimized
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.venv/
+venv/
+env/
+.python-version
+
+# Packaging / test tooling
+build/
+dist/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+.Rhistory
+
+# Generated at run time by --stage segment; embeds run-specific absolute paths
+workflow/workspace/Automated_Setup.itksnap
+
+# Imaging data, derivatives and Nipype scratch never belong in the repository.
+# Resource atlases under resources/ are the deliberate exception and are tracked.
+*.nii
+*.nii.gz
+!resources/**/*.nii
+!resources/**/*.nii.gz
+work/
+work_*/
+Output/
+derivatives/
+*.log

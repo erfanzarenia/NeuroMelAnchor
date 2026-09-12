@@ -17,11 +17,13 @@ import argparse
 from pathlib import Path
 
 import SimpleITK as sitk
-from templateflow.api import get
 
 
 def fetch_template(resolution=1):
     """Return the TemplateFlow path to the brain-extracted MNI T1 at a resolution."""
+    # Imported lazily so --help works in an environment without TemplateFlow.
+    from templateflow.api import get
+
     path = get('MNI152NLin2009cAsym', resolution=resolution, desc='brain',
                suffix='T1w', extension='nii.gz')
     if isinstance(path, list):
