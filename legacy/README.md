@@ -5,7 +5,7 @@ pipeline is `workflow/scripts/neuromelanchor_pipeline.py`.
 
 ## `NM_Nipype_Pipeline.py`
 
-Samuel Marshall, March 2026. The original Nipype pipeline every later version
+Sam Marshall (@smarsh127), March 2026. The original Nipype pipeline every later version
 descends from: realign, N4 bias correct, brain extract, register T1→MNI with a
 brainstem weighting mask, register NM→T1, compose the transforms, smooth.
 
@@ -26,7 +26,7 @@ moved and what was deliberately *not* added.
 **Why it was not merged forward.** It was written against the March monolith.
 The pipeline has since gained container-based template building, the V4 drawing
 template, hi-res re-warping, two additional atlas comparison methods, core/rim
-masking, a fourth stage and per-subject QC dashboards — roughly 2000 lines that
+masking, a fourth stage and per-subject QC dashboards, more than 2,000 lines that
 have no counterpart here. Rebasing the split onto the current script would mean
 redoing it from scratch, not merging.
 

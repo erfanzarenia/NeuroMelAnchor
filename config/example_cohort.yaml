@@ -1,19 +1,19 @@
-# Example cohort configuration — REFERENCE ONLY.
+# Example cohort configuration (reference only).
 #
-# The pipeline does NOT read this file. It is driven entirely by command-line
-# options. This file exists so the settings that vary between cohorts can be
-# written down in one readable place, reviewed, and turned into a command.
+# The pipeline does NOT read this file; it is driven entirely by command-line
+# options. The file exists so the settings that vary between cohorts can be written
+# down in one readable place, reviewed, and turned into a command.
 #
-# See docs/STATUS.md for the state of proper configuration-file support.
+# See docs/STATUS.md for the state of configuration-file support.
 
 cohort: biogen                 # --cohort {biogen, snit}
 
 paths:
-  project_root: /path/to/NeuroMelAnchor    # --project_root, a checkout of this repo
-  design_dir:   /path/to/bids_root         # --design_dir, contains sub-*
-  output_root:  /path/to/outputs           # --output_root, inside project_root for V4
-  work_dir:     /path/to/work              # --work_dir, large and disposable
-  manual_dir:   null                       # --manual_dir, optional per-subject SN masks
+  project_root: /path/to/NeuroMelAnchor           # --project_root, a checkout of this repository
+  design_dir:   /path/to/bids_root                # --design_dir, contains sub-*
+  output_root:  /path/to/NeuroMelAnchor/outputs   # --output_root, inside project_root for V4
+  work_dir:     /path/to/work                     # --work_dir, large and disposable
+  manual_dir:   null                              # --manual_dir, optional per-subject SN masks
 
 input:
   nm_input: combo              # --nm_input {combo, echo}
@@ -35,20 +35,23 @@ execution:
 
 template:
   drawing_template: v4         # --drawing_template {v4, naive}
-  rebuild_template: false      # --rebuild_template, refuses to run if a tracing exists
+  rebuild_template: false      # --rebuild_template, refuses to run while a tracing exists
+
+nm_mask:
+  search_dilation_mm: 0.0      # --search_dilation_mm, grow the propagated SN tracing (the poster used 0.5)
+  skip_core_rim_nm: false      # --skip_core_rim_nm
 
 evaluation:
-  prob_atlas_mni: null         # --prob_atlas_mni, defaults to CIT168 probabilistic SNc
+  prob_atlas_mni: null         # --prob_atlas_mni, defaults to the CIT168 probabilistic SNc
   prob_atlas_threshold: 0.25   # --prob_atlas_threshold
   skip_prob_atlas: false       # --skip_prob_atlas
   nms_atlas_mni: null          # --nms_atlas_mni, defaults to the NMS probabilistic SNc
   nms_atlas_threshold: 0.25    # --nms_atlas_threshold
   skip_nms_atlas: false        # --skip_nms_atlas
-  skip_core_rim_nm: false      # --skip_core_rim_nm
 
 # Masking constants are NOT command-line options. They are module-level in
-# neuromelanchor_pipeline.py and are echoed into the run log, so any result can be
-# traced back to the values used. Listed here for reference; see docs/STATUS.md.
+# neuromelanchor_pipeline.py and echoed into the run log, so any result can be traced
+# back to the values used. Listed for reference; see docs/STATUS.md.
 masking_constants_readonly:
   seed_cnr_floor: 0.05
   seed_cnr_percentile: 55
@@ -60,14 +63,14 @@ masking_constants_readonly:
   core_rim_min_cluster_voxels: 25
   core_rim_components_to_keep: 2
 
-# The command the settings above describe:
+# The command these settings describe:
 #
 #   python workflow/scripts/neuromelanchor_pipeline.py \
 #     --project_root /path/to/NeuroMelAnchor \
 #     --design_dir   /path/to/bids_root \
-#     --output_root  /path/to/outputs \
+#     --output_root  /path/to/NeuroMelAnchor/outputs \
 #     --work_dir     /path/to/work \
 #     --cohort biogen --nm_input combo --nm_image_strategy mean \
 #     --stage all --n_procs 10 --smooth 0 --hires \
-#     --drawing_template v4 \
+#     --drawing_template v4 --search_dilation_mm 0 \
 #     --prob_atlas_threshold 0.25 --nms_atlas_threshold 0.25

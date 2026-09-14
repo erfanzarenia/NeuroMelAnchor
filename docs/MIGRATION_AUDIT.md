@@ -1,4 +1,4 @@
-# Migration Audit — NeuroMelAnchor
+# Migration Audit: NeuroMelAnchor
 
 Audit performed before restructuring, comparing the live working project at
 `/scratch/Projects/BrainHack_Nexus` (referred to below as **Nexus**) against the
@@ -32,7 +32,7 @@ code; the rest is imaging data, derivatives and Nipype scratch.
 | `workflow/scripts/Native_Template_Builder_Preparation.py` | 348 | 2026-07-25 | Prior-mask prep for the native-space builder |
 | `workflow/scripts/R2_Star_generation.py` | 167 | 2026-07-12 | Standalone R2* fitting utility |
 | `workflow/scripts/Resample_T1.py` | 23 | 2026-05-25 | Generates the 0.5 mm MNI reference |
-| `workflow/scripts/Rename.py` | 25 | 2026-07-20 | **Unfinished** — loop body is empty |
+| `workflow/scripts/Rename.py` | 25 | 2026-07-20 | **Unfinished**: loop body is empty |
 | `Extra_Functions/NM_Nipype_Pipeline.py` | ~400 | 2026-03-22 | Original ancestor pipeline (S. Marshall) |
 | `Extra_Functions/BrainStem_Mask_Gen.py` | 20 | 2026-03-22 | Harvard-Oxford brainstem mask generator |
 | `Extra_Functions/mp2rage_genUniDen.py` | 160 | 2026-03-28 | Third-party MP2RAGE denoising (O'Brien et al.) |
@@ -40,8 +40,8 @@ code; the rest is imaging data, derivatives and Nipype scratch.
 | `Extra_Functions/NM_BioGen_ReName.py` | 60 | 2026-03-26 | BIDS renamer |
 | `Scripts/NM_BioGen_ReName.py` | 60 | 2026-04-10 | Near-duplicate of the above (differs by one glob) |
 | `Scripts/Generate_Mask_From_Brain-Navigator.py` | 45 | 2026-06-07 | Builds the midbrain prior from BrainstemNavigator |
-| `workflow/workspace/NEXUS_NM_Template_ITKsnap.xml` | 260 | — | ITK-SNAP workspace template |
-| `workflow/workspace/Automated_Setup.itksnap` | 260 | — | **Generated at runtime**, but committed |
+| `workflow/workspace/NEXUS_NM_Template_ITKsnap.xml` | 260 | n/a | ITK-SNAP workspace template |
+| `workflow/workspace/Automated_Setup.itksnap` | 260 | n/a | **Generated at runtime**, but committed |
 | `workflow/requirements.txt` | 76 | 2026-03-29 | Pinned Python environment |
 
 ### Resources present in Nexus
@@ -84,11 +84,11 @@ workflow/workspace/{Automated_Setup.itksnap, NEXUS_NM_Template_ITKsnap.xml}
 
 Four branches exist:
 
-- `main` — as above.
-- `update-workflow-files` — merged into `main` via PR #1.
-- `Post-BrainHack-Updates` — 2026-05-04, has `Template_Builder.py` at repo root and
+- `main`: as above.
+- `update-workflow-files`: merged into `main` via PR #1.
+- `Post-BrainHack-Updates`: 2026-05-04, has `Template_Builder.py` at repo root and
   a duplicated `BrainHack_NM_Nipype_Pipeline_Updated.py`. Superseded by `main`.
-- `modular_branch` — 2026-03-28, a **competing modular refactor** by Dylan:
+- `modular_branch`: 2026-03-28, a **competing modular refactor** by Dylan:
   `run_pipeline.py`, `functions.py`, `phase1.py`, `phase2.py`, `segment.py`,
   plus `CHANGE_LOG.md` documenting a deliberate behaviour-preserving split.
 
@@ -136,9 +136,9 @@ their committed state, and both are themselves superseded by newer Nexus files.
 
 | Cluster | Members | Resolution |
 |---|---|---|
-| **Main pipeline** | 6 files, 1389–3387 lines | Strictly linear lineage confirmed by diff (281 / 233 / 460 changed lines between consecutive revisions). Keep **July-15th** as canonical. Archive the original ancestor; drop intermediate revisions (recoverable from Nexus and Git history). |
+| **Main pipeline** | 6 files, 1389 to 3387 lines | Strictly linear lineage confirmed by diff (281 / 233 / 460 changed lines between consecutive revisions). Keep **July-15th** as canonical. Archive the original ancestor; drop intermediate revisions (recoverable from Nexus and Git history). |
 | **MNI template builder** | `Template_Builder.py` → `v2` → `V3` → `V4` | Linear (359 / 326 / 41 changed lines). Keep **V4**. V3→V4 is a 41-line delta, so V4 is a safe successor. |
-| **Native template builder** | `Template_Builder_Native_V1.py` + `Native_Template_Builder_Preparation.py` | **Not** a successor to V4 — 394 changed lines, different input model (native-space subject crops, per-subject centroid alignment). Genuinely parallel work. **Keep both**, marked experimental. |
+| **Native template builder** | `Template_Builder_Native_V1.py` + `Native_Template_Builder_Preparation.py` | **Not** a successor to V4: 394 changed lines, different input model (native-space subject crops, per-subject centroid alignment). Genuinely parallel work. **Keep both**, marked experimental. |
 | **BIDS renamer** | `Extra_Functions/NM_BioGen_ReName.py` vs `Scripts/NM_BioGen_ReName.py` | Differ by one glob pattern (`*MP2RAGE_UNI_Images*.nii` vs `*LH.nii`) and one whitespace line. Merge into one script with the pattern as a CLI argument. |
 | **Modular refactor** | `modular_branch` (`phase1/phase2/functions/segment/run_pipeline`) | A faithful split of the **March** monolith; ~9 months of pipeline development have happened since, and it shares no code with the current script. Cannot be merged forward without redoing the split. **Preserve under `legacy/` with its CHANGE_LOG**, documented as the reference design for a future modularization. |
 | **Generated ITK-SNAP workspace** | `Automated_Setup.itksnap` tracked *and* regenerated at runtime | Stop tracking; regenerate under the output root. |
@@ -155,7 +155,7 @@ their committed state, and both are themselves superseded by newer Nexus files.
   `BrainStem_Mask_Gen.py`, `BioGen_Denoising.sh`. The main pipeline itself is clean.
 - `Rename.py` is dead: the subject loop assigns one unused f-string and does nothing.
 - Cohort-specific `SelectFiles` patterns are switched by commenting/uncommenting
-  blocks (pipeline lines ~1496–1527) rather than by configuration.
+  blocks (pipeline lines ~1496 to 1527) rather than by configuration.
 - `BioGen_Denoising.sh` iterates a glob hard-wired to a single subject (`sub-782`).
 - The `segment` stage writes its generated workspace back into the repository tree.
 - No tests of any kind exist.
@@ -215,3 +215,30 @@ NeuroMelAnchor/
 
 Deliberately **not** migrated: imaging data, derivatives, Nipype work directories,
 `fireants.sif`, the `.venv`, and `Backup/`.
+
+---
+
+## Addendum: 2026-09-14 sync
+
+A second comparison, three days after the audit above, found these changes in Nexus:
+
+| Path | Change |
+|---|---|
+| `workflow/scripts/NeuroMel_Anchor_Pipeline_July-15th.py` | Edited from 2026-09-12 to 2026-09-14 and now v3.0 (153,753 to 181,346 bytes). Adds `--search_dilation_mm`, closing of the NM mask, poster figures and an NM-blind control in group QC, fuller run logging, and the authors' note on limitations |
+| `workflow/scripts/Posters_Trajectory_Plots.py` | New: plots of the NM mask's metrics across a search-dilation sweep |
+| `workflow/scripts/BrainHack_Poster_Workflow_Methods.py` | New: method panels for the poster |
+| `NM_BioGen_PP/echo-1/` | New outputs from the dilation sweep (`results_dil-*`), plus earlier `results_preclose_*` runs from before the closing step |
+| `NM_SNIT_PP/` | One subdirectory (`SNIT_adult_combo-mean`) was moved or renamed; data only |
+
+Nothing else had changed. The Nexus Git repository had no new commits or refs, and
+GitHub was unchanged.
+
+The sync also found three errors in the September 11 work, all corrected on
+2026-09-14:
+
+- The superseded tracings copied into the repository were the March upload, not the
+  July files retired on 2026-09-10.
+- Several documented outputs came from an April run rather than from the current code.
+- The contributor history misattributed the development since Brainhack.
+
+Details are in [PROVENANCE.md](PROVENANCE.md) and [../CHANGELOG.md](../CHANGELOG.md).

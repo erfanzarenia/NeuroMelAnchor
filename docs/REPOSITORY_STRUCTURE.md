@@ -10,36 +10,37 @@ NeuroMelAnchor/
 │   └── example_cohort.yaml
 ├── docs/
 ├── workflow/
-│   ├── scripts/
-│   ├── tools/
-│   └── workspace/
+│   ├── scripts/      the pipeline and the template builders
+│   ├── tools/        standalone utilities
+│   ├── figures/      post-hoc figure scripts
+│   └── workspace/    ITK-SNAP workspace template
 ├── resources/
 │   ├── tpl-MNI152NLin2009cAsym/
-│   └── traces_superseded_2026-09-10/
+│   ├── traces_superseded_2026-09-10/
+│   └── traces_github_2026-03-29/
 ├── legacy/
 └── tests/
 ```
 
 ---
 
-## `workflow/scripts/` — the pipeline
+## `workflow/scripts/`: the pipeline
 
-| File | Lines | Status | Purpose |
-|---|---:|---|---|
-| `neuromelanchor_pipeline.py` | 3429 | **canonical** | The whole pipeline. All four stages, driven by `--stage` |
-| `template_builder.py` | 1004 | **canonical** | FireANTs iterative template construction in MNI space. Invoked by `--stage segment`; runnable directly |
-| `template_builder_native.py` | 1164 | experimental | Same idea on a chosen subject's native grid. Not called by the pipeline |
-| `native_template_prep.py` | 354 | experimental | Prepares per-subject inputs for the native builder |
+| File | Status | Purpose |
+|---|---|---|
+| `neuromelanchor_pipeline.py` | **canonical** | The whole pipeline, about 3,900 lines: all four stages, selected with `--stage` |
+| `template_builder.py` | **canonical** | FireANTs iterative template construction in MNI space. Called by `--stage segment`; can also be run directly |
+| `template_builder_native.py` | experimental | The same approach on a chosen subject's native grid. Not called by the pipeline |
+| `native_template_prep.py` | experimental | Prepares per-subject inputs for the native builder |
 
-The pipeline is one long script rather than a package. That is a deliberate
-consequence of how Nipype works — functions passed to `Function` nodes are
-re-serialised by source and re-executed in bare worker processes, so they must
-import everything they use inside their own body. See
-[STATUS.md](STATUS.md) for the modularization question.
+The pipeline is one long script rather than a package. Splitting it is possible but
+needs care: functions passed to Nipype `Function` nodes are re-serialized from their
+source and run in bare worker processes, so they must import everything they use
+inside their own bodies. See [STATUS.md](STATUS.md).
 
-## `workflow/tools/` — standalone utilities
+## `workflow/tools/`: standalone utilities
 
-Nothing here is called by the pipeline. Each has its own `--help`; see
+The pipeline never calls these. Each has its own `--help`; see
 [../workflow/tools/README.md](../workflow/tools/README.md).
 
 | File | Purpose |
@@ -47,44 +48,54 @@ Nothing here is called by the pipeline. Each has its own `--help`; see
 | `resample_mni_reference.py` | Writes the 1 mm and 0.5 mm MNI brain references into `resources/` |
 | `make_brainstem_mask.py` | Rebuilds the Stage 1 brainstem weighting mask |
 | `make_midbrain_prior.py` | Rebuilds the midbrain crop prior from BrainstemNavigator |
-| `bids_rename.py` | Renames scanner exports to BIDS-style names. Dry run by default |
+| `bids_rename.py` | Renames scanner exports to BIDS-style names; a dry run unless `--apply` is given |
 | `mp2rage_uniden.py` | Third-party MP2RAGE UNI denoising, kept verbatim |
 | `mp2rage_uniden_batch.sh` | Runs the above over a BIDS directory |
-| `fit_r2star.py` | R2*/T2* fitting from multi-echo GRE. Unrelated to the pipeline |
+| `fit_r2star.py` | R2* and T2* fitting from multi-echo GRE; unrelated to the pipeline |
+
+## `workflow/figures/`: figure scripts
+
+Post-hoc scripts that read finished outputs; see
+[../workflow/figures/README.md](../workflow/figures/README.md).
+
+| File | Purpose |
+|---|---|
+| `poster_workflow_panels.py` | The method panels of the Brainhack Western 2026 poster |
+| `poster_dilation_sweep.py` | Metrics of the NM mask against `--search_dilation_mm`, across a sweep |
+
+The pipeline makes the group-level poster figures itself during group QC.
 
 ## `workflow/workspace/`
 
-`NEXUS_NM_Template_ITKsnap.xml` — the ITK-SNAP workspace template used by
-`--drawing_template naive`. Placeholders (`PROJECT_ROOT`, `TARGET_T1_PATH`,
-`TARGET_NM_PATH`, `TARGET_MASK_PATH`) are substituted at run time and the result
-is written to `<output_root>/Automated_Setup.itksnap`, not back into the
-repository.
+`NEXUS_NM_Template_ITKsnap.xml` is the ITK-SNAP workspace template used by
+`--drawing_template naive`. Its placeholders (`PROJECT_ROOT`, `TARGET_T1_PATH`,
+`TARGET_NM_PATH`, `TARGET_MASK_PATH`) are filled in at run time and the result is
+written to `<output_root>/Automated_Setup.itksnap`, not back into the repository.
 
 ## `resources/`
 
-Atlas priors and MNI references, resolved from `--project_root`. Full table in
-[../resources/README.md](../resources/README.md), including the one file you must
-generate after cloning.
+Atlas priors and MNI references, resolved from `--project_root`. The full table,
+including the one file you must generate after cloning, is in
+[../resources/README.md](../resources/README.md).
 
-`traces_superseded_2026-09-10/` holds the MNI-space manual tracings used up to
-May 2026, retired when tracing moved onto the V4 template. Nothing reads them.
+Two retired sets of MNI-space manual tracings are kept for provenance and read by
+nothing: `traces_superseded_2026-09-10/` (dated 2026-07-09, used until the V4 template
+replaced them) and `traces_github_2026-03-29/` (the repository's original upload).
 
 ## `config/`
 
-`example_cohort.yaml` documents the per-cohort settings as a single readable
-file. **It is reference material, not a configuration file the pipeline loads** —
-the pipeline is driven entirely by command-line options. See
-[STATUS.md](STATUS.md).
+`example_cohort.yaml` writes the per-cohort settings down in one readable file.
+**The pipeline does not load it**; it is driven entirely by command-line options.
 
 ## `legacy/`
 
-Superseded implementations, kept for provenance and not maintained:
-the original March pipeline, and the `modular_branch` refactor.
-See [../legacy/README.md](../legacy/README.md) and [PROVENANCE.md](PROVENANCE.md).
+Superseded implementations kept for provenance and not maintained: the original March
+2026 pipeline and the `modular_branch` refactor. See
+[../legacy/README.md](../legacy/README.md) and [PROVENANCE.md](PROVENANCE.md).
 
 ## `tests/`
 
-Smoke checks and unit tests that need no external software and no data. See
+Smoke checks and unit tests that need no external software and no imaging data. See
 [../tests/README.md](../tests/README.md).
 
 ## `docs/`
@@ -93,23 +104,23 @@ Smoke checks and unit tests that need no external software and no data. See
 |---|---|
 | `INSTALL.md` | Environment and external software |
 | `DATA_SPECIFICATION.md` | Inputs and every output produced |
-| `USAGE.md` | Running each stage; full option reference |
+| `USAGE.md` | Running each stage, the option reference, and sweeps |
 | `WORKFLOW.md` | What each step does and why |
-| `MANUAL_SEGMENTATION.md` | ITK-SNAP tracing protocol |
-| `EVALUATION.md` | QC metrics and how to read them |
+| `MANUAL_SEGMENTATION.md` | The ITK-SNAP tracing protocol |
+| `EVALUATION.md` | QC metrics, flags and poster figures |
 | `REPOSITORY_STRUCTURE.md` | This file |
-| `STATUS.md` | Implemented vs unfinished, known limitations |
-| `PROVENANCE.md` | Authorship and version decisions |
+| `STATUS.md` | Implemented and unfinished work, and known limitations |
+| `PROVENANCE.md` | Project history, contributors and version decisions |
 | `MIGRATION_AUDIT.md` | The audit behind the September 2026 reorganization |
 
 ---
 
 ## What is deliberately absent
 
-Imaging data, derivatives, Nipype work directories, the FireANTs container image
-and virtual environments are **not** tracked. `.gitignore` excludes `*.nii`
-and `*.nii.gz` everywhere except under `resources/`, which is the one place
-volumes are tracked on purpose.
+Imaging data, derivatives, Nipype work directories, the FireANTs container image and
+virtual environments are **not** tracked. `.gitignore` excludes `*.nii` and `*.nii.gz`
+everywhere except under `resources/`, the one place where volumes are tracked on
+purpose.
 
-The working data for this project lives at `/scratch/Projects/BrainHack_Nexus`
-and is not part of the repository.
+The project's working data lives at `/scratch/Projects/BrainHack_Nexus` and is not part
+of the repository.

@@ -8,7 +8,7 @@ relative to `resources/tpl-MNI152NLin2009cAsym/` and are resolved from
 |---|---|---|
 | `HarvardOxford/Brainstem.nii.gz` | Stage 1 (required) | Weighting mask that focuses the T1→MNI SyN registration on the brainstem |
 | `HarvardOxford/Midbrain.nii.gz` | template builders | Midbrain prior used to crop subjects before template construction |
-| `HarvardOxford/Brainstem_Midbrain.nii.gz` | — | Union of the two above; produced alongside `Midbrain.nii.gz`, currently unused |
+| `HarvardOxford/Brainstem_Midbrain.nii.gz` | none | Union of the two above; produced alongside `Midbrain.nii.gz`, currently unused |
 | `CIT168/SNc.nii.gz` | Stage 2 | Binary atlas SNc, warped to native space as the atlas comparison mask and as the anchoring source |
 | `CIT168_prob/CIT168toMNI152-2009c_prob_0006.nii.gz` | Stage 2 | Default probabilistic SNc atlas (`ProbCIT` QC method) |
 | `NMS_prob/NMS_Snc_prob.nii.gz` | Stage 2 | Neuromelanin-sensitive probabilistic SNc atlas (`NMS` QC method) |

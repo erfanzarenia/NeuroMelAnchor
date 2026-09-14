@@ -2,7 +2,7 @@
 
 Single-purpose utilities that sit beside the pipeline. None of them is invoked by
 `neuromelanchor_pipeline.py`; they prepare inputs, build resources, or derive
-extra maps. Each takes its paths on the command line — run any of them with
+extra maps. Each takes its paths on the command line; run any of them with
 `--help`.
 
 | Tool | Purpose |
