@@ -9,7 +9,22 @@ Workflow_3_Tracing.png       the template with the SN and CP tracings
 Workflow_4_SearchRegion.png  the propagated search region in native space
 Workflow_5_SubjectMask.png   the final NM-defined mask, same subject and slice
 
+Every panel is also saved as SVG. The script reads one finished pipeline output
+root: the V4 drawing template and its tracing, plus one subject's native-space NM
+image, search region and NM-defined mask.
+
+The Brainhack Western 2026 poster panels were made with:
+
+    python workflow/figures/poster_workflow_panels.py \
+        --output-root /path/to/NM_BioGen_PP/echo-1/results_dil-0.5 \
+        --subject sub-059 --slice 30
+
+The T1 panel needs the 0.5 mm MNI reference; if it is missing, generate it with
+workflow/tools/resample_mni_reference.py.
+
+A post-hoc figure script; it is not part of the pipeline.
 """
+import argparse
 from pathlib import Path
 
 import numpy as np
@@ -21,18 +36,13 @@ import matplotlib.pyplot as plt
 # =================================================================
 # Settings
 # =================================================================
-OUTPUT_ROOT = Path("/scratch/Projects/BrainHack_Nexus/NM_BioGen_PP/echo-1/results_dil-0.5")
-DRAWING_TEMPLATE = OUTPUT_ROOT / "drawing_template" / "SN_Template_V4_aligned.nii.gz"
-TRACE_DIR = OUTPUT_ROOT / "manual_trace_v4"
-T1_REFERENCE = Path("/scratch/Projects/BrainHack_Nexus/resources/tpl-MNI152NLin2009cAsym/MNI152NLin2009cAsym_res-05_desc-brain_T1w.nii.gz")
-PANEL_DIR = OUTPUT_ROOT.parent / "poster_figures"
+# Resolved from this file's location so the default works from any checkout.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_T1_REFERENCE = (REPO_ROOT / "resources" / "tpl-MNI152NLin2009cAsym"
+                        / "MNI152NLin2009cAsym_res-05_desc-brain_T1w.nii.gz")
 
-SUBJECT = "sub-059"                # the subject shown in the native-space panels
-SUBJECT_SLICE = 30                 # None = middle of the mask
-
-FOV_MM = (48.0, 36.0)              # field of view for every panel, in mm
-T1_FOV_MM = (48.0, 36.0)           # widen for context, e.g. (160.0, 118.0) keeps the same aspect
-MM_PER_INCH = 8.0                  # figure scale; all panels share it
+DEFAULT_FOV_MM = (48.0, 36.0)      # field of view for every panel, in mm
+DEFAULT_MM_PER_INCH = 8.0          # figure scale; all panels share it
 
 SN_COLOUR = "#2ECC71"              # green, as drawn in ITK-SNAP
 CP_COLOUR = "#FF4136"              # red, as drawn in ITK-SNAP
@@ -49,12 +59,13 @@ def middle_slice(mask):
     solid_slices = np.flatnonzero(slice_areas >= 0.10 * slice_areas.max())
     return int(np.percentile(solid_slices, 50))
 
+
 def save_poster_figure(fig, output_file, dpi=400):
-    """Save a poster figure as PNG (300 dpi) plus SVG and PDF, which stay sharp at any print size."""
+    """Save a poster figure as PNG and as SVG, which stays sharp at any print size."""
     output_file = Path(output_file)
-    fig.savefig(str(output_file), dpi=dpi, bbox_inches='tight')
-    fig.savefig(str(output_file.with_suffix('.svg')), bbox_inches='tight')
     fig.savefig(str(output_file.with_suffix('.png')), dpi=dpi, bbox_inches='tight')
+    fig.savefig(str(output_file.with_suffix('.svg')), bbox_inches='tight')
+
 
 def centre_of(mask):
     """Centre of a mask, in voxels."""
@@ -72,9 +83,9 @@ def crop_at(centre_voxel, zooms, shape, fov_mm):
             slice(starts[1], starts[1] + 2 * half_widths[1]))
 
 
-def save_panel(background, overlays, output_file, fov_mm=FOV_MM):
+def save_panel(background, overlays, output_file, fov_mm=DEFAULT_FOV_MM, mm_per_inch=DEFAULT_MM_PER_INCH):
     """One greyscale slice with filled and/or outlined overlays, filling the whole figure."""
-    fig = plt.figure(figsize=(fov_mm[0] / MM_PER_INCH, fov_mm[1] / MM_PER_INCH))
+    fig = plt.figure(figsize=(fov_mm[0] / mm_per_inch, fov_mm[1] / mm_per_inch))
     axis = fig.add_axes([0, 0, 1, 1])
 
     shown = background[background > 0]
@@ -103,61 +114,96 @@ def save_panel(background, overlays, output_file, fov_mm=FOV_MM):
 # =================================================================
 # Panels
 # =================================================================
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--output-root", type=Path, required=True,
+                        help="Pipeline output root containing drawing_template/, manual_trace_v4/ and sub-*/anat/.")
+    parser.add_argument("--subject", required=True,
+                        help="Subject shown in the native-space panels, e.g. sub-059.")
+    parser.add_argument("--slice", type=int, default=None, dest="subject_slice",
+                        help="Axial slice for the native-space panels (default: middle of the subject's mask).")
+    parser.add_argument("--drawing-template", type=Path, default=None,
+                        help="Default: <output-root>/drawing_template/SN_Template_V4_aligned.nii.gz.")
+    parser.add_argument("--trace-dir", type=Path, default=None,
+                        help="Directory with MNI_SNc_Manual and MNI_CP_Manual (default: <output-root>/manual_trace_v4).")
+    parser.add_argument("--t1-reference", type=Path, default=DEFAULT_T1_REFERENCE,
+                        help="T1 shown in the input panel (default: the 0.5 mm MNI reference in resources/).")
+    parser.add_argument("--out-dir", type=Path, default=None,
+                        help="Where to write the panels (default: poster_figures/ beside --output-root).")
+    parser.add_argument("--fov-mm", type=float, nargs=2, default=list(DEFAULT_FOV_MM),
+                        metavar=("WIDTH", "HEIGHT"), help="Field of view of every panel in mm (default: 48 36).")
+    parser.add_argument("--t1-fov-mm", type=float, nargs=2, default=list(DEFAULT_FOV_MM),
+                        metavar=("WIDTH", "HEIGHT"),
+                        help="Field of view of the T1 panel; widen it for context, e.g. 160 118 (default: 48 36).")
+    parser.add_argument("--mm-per-inch", type=float, default=DEFAULT_MM_PER_INCH,
+                        help="Figure scale shared by every panel (default: 8).")
+    return parser.parse_args()
+
+
 def main():
-    PANEL_DIR.mkdir(parents=True, exist_ok=True)
+    args = parse_args()
+    output_root = args.output_root
+    drawing_template = args.drawing_template or output_root / "drawing_template" / "SN_Template_V4_aligned.nii.gz"
+    trace_dir = args.trace_dir or output_root / "manual_trace_v4"
+    panel_dir = args.out_dir or output_root.parent / "poster_figures"
+    fov_mm, t1_fov_mm = tuple(args.fov_mm), tuple(args.t1_fov_mm)
+    panel_dir.mkdir(parents=True, exist_ok=True)
 
     # Template space: the template, the tracing, and the T1 behind them
-    template_img = nib.load(str(DRAWING_TEMPLATE))
+    template_img = nib.load(str(drawing_template))
     template = template_img.get_fdata()
     template_zooms = template_img.header.get_zooms()[:3]
-    sn_trace = nib.load(str(TRACE_DIR / "MNI_SNc_Manual.nii.gz")).get_fdata() > 0
-    cp_trace = nib.load(str(TRACE_DIR / "MNI_CP_Manual.nii.gz")).get_fdata() > 0
+    sn_trace = nib.load(str(trace_dir / "MNI_SNc_Manual.nii.gz")).get_fdata() > 0
+    cp_trace = nib.load(str(trace_dir / "MNI_CP_Manual.nii.gz")).get_fdata() > 0
 
     template_z = middle_slice(sn_trace)
     template_centre = centre_of(sn_trace | cp_trace)
-    rows, cols = crop_at(template_centre, template_zooms, template.shape, FOV_MM)
+    rows, cols = crop_at(template_centre, template_zooms, template.shape, fov_mm)
     print(f"template panels: slice {template_z}")
 
-    save_panel(template[rows, cols, template_z], [], PANEL_DIR / "Workflow_2_Template.png")
+    save_panel(template[rows, cols, template_z], [], panel_dir / "Workflow_2_Template.png",
+               fov_mm=fov_mm, mm_per_inch=args.mm_per_inch)
     save_panel(template[rows, cols, template_z],
                [(cp_trace[rows, cols, template_z], CP_COLOUR, "both"),
                 (sn_trace[rows, cols, template_z], SN_COLOUR, "both")],
-               PANEL_DIR / "Workflow_3_Tracing.png")
+               panel_dir / "Workflow_3_Tracing.png", fov_mm=fov_mm, mm_per_inch=args.mm_per_inch)
 
     # the T1 sits in the same physical space, so match the crop through world coordinates
-    t1_img = nib.load(str(T1_REFERENCE))
+    t1_img = nib.load(str(args.t1_reference))
     t1_data = t1_img.get_fdata()
     world_point = nib.affines.apply_affine(template_img.affine,
                                            [template_centre[0], template_centre[1], template_z])
     t1_voxel = nib.affines.apply_affine(np.linalg.inv(t1_img.affine), world_point)
-    t1_rows, t1_cols = crop_at(t1_voxel, t1_img.header.get_zooms()[:3], t1_data.shape, T1_FOV_MM)
+    t1_rows, t1_cols = crop_at(t1_voxel, t1_img.header.get_zooms()[:3], t1_data.shape, t1_fov_mm)
     save_panel(t1_data[t1_rows, t1_cols, int(round(t1_voxel[2]))], [],
-               PANEL_DIR / "Workflow_1b_Input_T1.png", fov_mm=T1_FOV_MM)
+               panel_dir / "Workflow_1b_Input_T1.png", fov_mm=t1_fov_mm, mm_per_inch=args.mm_per_inch)
 
     # Native space: the input NM, the search region, and the final mask
-    anat_dir = OUTPUT_ROOT / SUBJECT / "anat"
+    anat_dir = output_root / args.subject / "anat"
     native_img = nib.load(str(anat_dir / "mean_NM_bias_corrected.nii.gz"))
     native_nm = native_img.get_fdata()
     native_zooms = native_img.header.get_zooms()[:3]
 
     region_file = anat_dir / "Native_SN_Search_Region.nii.gz"
     if not region_file.exists():
+        # Outputs from before v3.0 have no search region file; the propagated drawing is the same region.
         region_file = anat_dir / "MNI_SNc_Manual_trans.nii.gz"
     search_region = nib.load(str(region_file)).get_fdata() > 0
     subject_mask = nib.load(str(anat_dir / "Native_Tractography_Seed_SNc.nii.gz")).get_fdata() > 0
 
-    subject_z = SUBJECT_SLICE if SUBJECT_SLICE is not None else middle_slice(subject_mask)
-    subject_rows, subject_cols = crop_at(centre_of(search_region), native_zooms, native_nm.shape, FOV_MM)
-    print(f"subject panels: {SUBJECT}, slice {subject_z}, region from {region_file.name}")
+    subject_z = args.subject_slice if args.subject_slice is not None else middle_slice(subject_mask)
+    subject_rows, subject_cols = crop_at(centre_of(search_region), native_zooms, native_nm.shape, fov_mm)
+    print(f"subject panels: {args.subject}, slice {subject_z}, region from {region_file.name}")
 
     save_panel(native_nm[subject_rows, subject_cols, subject_z], [],
-               PANEL_DIR / "Workflow_1a_Input_NM.png")
+               panel_dir / "Workflow_1a_Input_NM.png", fov_mm=fov_mm, mm_per_inch=args.mm_per_inch)
     save_panel(native_nm[subject_rows, subject_cols, subject_z],
                [(search_region[subject_rows, subject_cols, subject_z], REGION_COLOUR, "both")],
-               PANEL_DIR / "Workflow_4_SearchRegion.png")
+               panel_dir / "Workflow_4_SearchRegion.png", fov_mm=fov_mm, mm_per_inch=args.mm_per_inch)
     save_panel(native_nm[subject_rows, subject_cols, subject_z],
                [(subject_mask[subject_rows, subject_cols, subject_z], MASK_COLOUR, "both")],
-               PANEL_DIR / "Workflow_5_SubjectMask.png")
+               panel_dir / "Workflow_5_SubjectMask.png", fov_mm=fov_mm, mm_per_inch=args.mm_per_inch)
 
 
 if __name__ == "__main__":
