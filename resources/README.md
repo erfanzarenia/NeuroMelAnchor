@@ -31,6 +31,19 @@ python workflow/tools/resample_mni_reference.py --out-dir resources/tpl-MNI152NL
 with `workflow/tools/make_midbrain_prior.py`; it is committed because the
 BrainstemNavigator distribution is not freely redistributable.
 
+## Retired tracings
+
+Two earlier sets of MNI-space SN/CP tracings are kept for provenance. Nothing in
+the current workflow reads either.
+
+| Directory | Origin |
+|---|---|
+| `traces_superseded_2026-09-10/` | Dated 2026-07-09; read by the pipeline until retired on 2026-09-10 |
+| `traces_github_2026-03-29/` | The repository's original upload, tracked on `main` until September 2026 |
+
+The current tracing is drawn per dataset with `--stage segment` and lives in
+`<output_root>/manual_trace_v4/`.
+
 ## Third-party licensing
 
 The NMS probabilistic SNc atlas is redistributed from the `NMS-SNc-atlas` release
