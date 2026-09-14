@@ -113,6 +113,11 @@ were re-applied to the new file, so the commit that brought v3.0 in contains exa
 the upstream change: 529 lines added and 6 removed. Cleanup followed in separate
 commits.
 
+One file changed again while the sync was under way: at 16:51,
+`BrainHack_Poster_Workflow_Methods.py` stopped padding its panels with a white border.
+That edit was ported into `workflow/figures/poster_workflow_panels.py` in a follow-up
+commit and checked the same way, pixel for pixel against the edited original.
+
 ---
 
 ## The modular refactor

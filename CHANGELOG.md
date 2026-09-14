@@ -29,7 +29,8 @@ Nexus was again treated as read-only.
     rather than a contrast-to-noise ratio.
 - **Figure scripts** `workflow/figures/poster_workflow_panels.py` and
   `workflow/figures/poster_dilation_sweep.py`, from `BrainHack_Poster_Workflow_Methods.py`
-  and `Posters_Trajectory_Plots.py`.
+  and `Posters_Trajectory_Plots.py`. The method panels are saved edge to edge, without a
+  white border, following a Nexus edit made while the sync was under way.
 
 ### Cleaned
 

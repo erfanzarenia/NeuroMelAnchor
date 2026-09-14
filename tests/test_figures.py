@@ -64,3 +64,17 @@ def test_panel_crop_is_pushed_back_inside_the_image(panels):
 
     rows, cols = panels.crop_at((99, 79), (0.5, 0.5), (100, 80), (48.0, 36.0))
     assert (rows.start, rows.stop, cols.start, cols.stop) == (4, 100, 8, 80)
+
+
+def test_panels_are_saved_edge_to_edge(tmp_path, panels):
+    """Panels fill the figure, so the PNG is exactly the figure size, with no white border."""
+    import numpy as np
+    import matplotlib.image as mpimg
+
+    output = tmp_path / "panel.png"
+    panels.save_panel(np.random.RandomState(0).rand(96, 72) + 1.0, [], output,
+                      fov_mm=(48.0, 36.0), mm_per_inch=8.0)
+
+    # 48 x 36 mm at 8 mm per inch is 6 x 4.5 in, which is 2400 x 1800 px at 400 dpi.
+    assert mpimg.imread(output).shape[:2] == (1800, 2400)
+    assert output.with_suffix(".svg").exists()

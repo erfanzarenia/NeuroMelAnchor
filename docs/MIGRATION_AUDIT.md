@@ -226,7 +226,7 @@ A second comparison, three days after the audit above, found these changes in Ne
 |---|---|
 | `workflow/scripts/NeuroMel_Anchor_Pipeline_July-15th.py` | Edited from 2026-09-12 to 2026-09-14 and now v3.0 (153,753 to 181,346 bytes). Adds `--search_dilation_mm`, closing of the NM mask, poster figures and an NM-blind control in group QC, fuller run logging, and the authors' note on limitations |
 | `workflow/scripts/Posters_Trajectory_Plots.py` | New: plots of the NM mask's metrics across a search-dilation sweep |
-| `workflow/scripts/BrainHack_Poster_Workflow_Methods.py` | New: method panels for the poster |
+| `workflow/scripts/BrainHack_Poster_Workflow_Methods.py` | New: method panels for the poster (edited again at 16:51 to drop the white border) |
 | `NM_BioGen_PP/echo-1/` | New outputs from the dilation sweep (`results_dil-*`), plus earlier `results_preclose_*` runs from before the closing step |
 | `NM_SNIT_PP/` | One subdirectory (`SNIT_adult_combo-mean`) was moved or renamed; data only |
 

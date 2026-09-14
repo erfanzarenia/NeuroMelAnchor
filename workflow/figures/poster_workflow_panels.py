@@ -61,10 +61,14 @@ def middle_slice(mask):
 
 
 def save_poster_figure(fig, output_file, dpi=400):
-    """Save a poster figure as PNG and as SVG, which stays sharp at any print size."""
+    """Save an edge-to-edge panel as PNG and SVG, with no white border.
+
+    The panel axes already fill the whole figure, so bbox_inches='tight' is not used:
+    it adds 0.1 in of white padding around the image.
+    """
     output_file = Path(output_file)
-    fig.savefig(str(output_file.with_suffix('.png')), dpi=dpi, bbox_inches='tight')
-    fig.savefig(str(output_file.with_suffix('.svg')), bbox_inches='tight')
+    fig.savefig(str(output_file.with_suffix('.png')), dpi=dpi)
+    fig.savefig(str(output_file.with_suffix('.svg')))
 
 
 def centre_of(mask):
