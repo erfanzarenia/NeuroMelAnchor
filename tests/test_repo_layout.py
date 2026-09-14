@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import REPO_ROOT, SCRIPTS_DIR, TOOLS_DIR, RESOURCES, pipeline_source
+from conftest import REPO_ROOT, SCRIPTS_DIR, TOOLS_DIR, FIGURES_DIR, RESOURCES, pipeline_source
 
 EXPECTED_SCRIPTS = [
     "neuromelanchor_pipeline.py",
@@ -28,6 +28,11 @@ EXPECTED_TOOLS = [
     "mp2rage_uniden.py",
     "mp2rage_uniden_batch.sh",
     "resample_mni_reference.py",
+]
+
+EXPECTED_FIGURES = [
+    "poster_dilation_sweep.py",
+    "poster_workflow_panels.py",
 ]
 
 EXPECTED_DOCS = [
@@ -55,6 +60,11 @@ def test_pipeline_scripts_present(name):
 @pytest.mark.parametrize("name", EXPECTED_TOOLS)
 def test_tools_present(name):
     assert (TOOLS_DIR / name).is_file()
+
+
+@pytest.mark.parametrize("name", EXPECTED_FIGURES)
+def test_figure_scripts_present(name):
+    assert (FIGURES_DIR / name).is_file()
 
 
 @pytest.mark.parametrize("name", EXPECTED_DOCS)
@@ -89,7 +99,8 @@ def test_pipeline_resource_paths_resolve():
 def test_no_site_specific_absolute_paths():
     """Scripts must not hard-code the Nexus working directory."""
     offenders = []
-    for path in [*SCRIPTS_DIR.rglob("*.py"), *TOOLS_DIR.rglob("*.py"), *TOOLS_DIR.rglob("*.sh")]:
+    for path in [*SCRIPTS_DIR.rglob("*.py"), *TOOLS_DIR.rglob("*.py"), *TOOLS_DIR.rglob("*.sh"),
+                 *FIGURES_DIR.rglob("*.py")]:
         if "/scratch/Projects/" in path.read_text():
             offenders.append(str(path.relative_to(REPO_ROOT)))
     assert not offenders, f"site-specific absolute paths in: {offenders}"
