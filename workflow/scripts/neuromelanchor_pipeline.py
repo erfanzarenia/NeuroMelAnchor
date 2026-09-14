@@ -60,11 +60,20 @@ Usage
         --smooth 0                          defaults to 0; set a smoothing FWHM in mm if needed
         --manual_dir  /path/to/manual_mask  for per-subject manual SN masks in Stage 2 QC
 
+### Limitations
+
+Currently the floor is not effectively introduced. 
+The threshold is a simple within-subject percentile. 
+THe top 45% of SN voxels are labelled as SN, the remaining 55% are labelled as noise and removed.
+This means if taht the weaker subjects, likely dont look as good and need to be reflected upon.
+The floor is supposed to help stop this, but is certainly too low to ever work.
+
+Contrast Ratio is actually used here instead of Contrast to Noise Ratio
 ================================================================================
 By NEXUS
 ================================================================================
 """
-__version__ = "2.5.0"
+__version__ = "3.0"
 
 # =================================================================
 # Import Statements
@@ -89,7 +98,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from templateflow.api import get
 from nilearn.image import mean_img
-from scipy.stats import gaussian_kde
+from scipy.stats import gaussian_kde, wilcoxon
+from scipy.ndimage import distance_transform_edt, binary_erosion
 
 from nipype.algorithms.misc import Gunzip
 from nipype import Workflow, Node, MapNode
@@ -142,6 +152,8 @@ parser.add_argument('--hires', action='store_true', help='Also output NM_MNI_res
 parser.add_argument('--skip_template_builder', action='store_true', help='Skip FireANTs iterative NM template build; use the naive group mean for ITK-SNAP instead')
 parser.add_argument('--drawing_template', choices=['v4', 'naive'], default='v4', help="Template the SN/CP masks are drawn on in --stage segment: v4 = FireANTs V4 midbrain template (default), naive = plain group mean")
 parser.add_argument('--rebuild_template', action='store_true', help="Rebuild and re-align the V4 drawing template")
+parser.add_argument('--search_dilation_mm', default=0.0, type=float, help="Grow the propagated SN search region by this many mm before NM refinement (default: 0 = current behaviour)")
+
 
 parser.add_argument("--nm_input", choices=["combo", "echo"], default="combo", help="NM source: 'combo' = vendor-combined multi-echo GRE (default, higher SNR)'echo' = single MEGRE echo, selected by --nm_echo")
 parser.add_argument("--cohort", choices=["biogen", "snit"], default="biogen", help="Selects the BIDS filename conventions used to find NM and T1 images (default: biogen)")
@@ -268,6 +280,14 @@ log.info(f"nm_image_n          : {args.nm_image_n}")
 log.info(f"cohort              : {args.cohort}")
 log.info(f"nm_pattern          : {nm_pattern}")
 log.info(f"t1_pattern          : {t1_pattern}")
+log.info(f"nm_input            : {args.nm_input}")
+log.info(f"nm_echo             : {args.nm_echo if args.nm_input == 'echo' else 'n/a'}")
+log.info(f"hires               : {args.hires}")
+log.info(f"drawing_template    : {args.drawing_template}")
+log.info(f"rebuild_template    : {args.rebuild_template}")
+log.info(f"search_dilation_mm  : {args.search_dilation_mm}")
+log.info(f"script              : {Path(__file__).resolve()}")
+log.info(f"command             : {' '.join(sys.argv)}")
 log.info("=" * 60)
 
 # =================================================================
@@ -822,7 +842,11 @@ def extract_tractography_seed(nm_image, native_sn_mask, native_cp_mask, cnr_floo
         & (smoothed_cnr_data <= upper_cnr_bound)
     )
     final_seed_mask = keep_largest_components(candidate_seed_mask, min_size=min_cluster_vox, max_components=keep_components,
-    ).astype(np.uint8)
+    )
+
+    final_seed_mask = (ndi.binary_closing(final_seed_mask, structure=np.ones((3, 3, 3), dtype=bool))
+                       & sn_mask).astype(np.uint8)
+
 
     cnr_out = os.path.abspath('Subject_CNR_Map_Smoothed.nii.gz')
     seed_out = os.path.abspath('Native_Tractography_Seed_SNc.nii.gz')
@@ -1485,6 +1509,35 @@ def compute_mask_qc(
 
     return qc_file
 
+def dilate_search_region(native_sn_mask, dilation_mm=0.0):
+    """
+    Grow the propagated SN search region by a few millimetres.
+
+    The NM refinement can only keep voxels inside this region, so a tight drawing
+    caps how much of the SN it can ever find. Growing it slightly lets the subject's
+    own NM contrast decide the boundary instead of the drawn outline.
+    """
+    import os
+    import numpy as np
+    import nibabel as nib
+    from scipy.ndimage import distance_transform_edt
+
+
+    search_img = nib.load(native_sn_mask)
+    search_mask = search_img.get_fdata() > 0
+
+    if float(dilation_mm) > 0:
+        voxel_size_mm = tuple(float(z) for z in search_img.header.get_zooms()[:3])
+        distance_from_mask_mm = distance_transform_edt(~search_mask, sampling=voxel_size_mm)
+        search_mask = distance_from_mask_mm <= float(dilation_mm)
+
+    search_header = search_img.header.copy()
+    search_header.set_data_dtype(np.uint8)
+    search_file = os.path.abspath('Native_SN_Search_Region.nii.gz')
+    nib.save(nib.Nifti1Image(search_mask.astype(np.uint8), search_img.affine, search_header), search_file)
+    return search_file
+
+
 def build_sn_roi_mask(cnr_seed, dilation_mm=6.0):
     """Build the search ROI used by the anchored-atlas registration step."""
     import os
@@ -2107,6 +2160,14 @@ if run_phase2:
     cnr_seed.inputs.min_cluster_vox = seed_min_cluster_voxels
     cnr_seed.inputs.keep_components = seed_components_to_keep
 
+    # =================================================================
+    # Search Region (propagated SN mask, optionally grown)
+    # =================================================================
+    search_region = Node(Function(input_names=['native_sn_mask', 'dilation_mm'],
+                                  output_names=['search_file'],
+                                  function=dilate_search_region), name='Search_Region')
+    search_region.inputs.dilation_mm = args.search_dilation_mm
+
     if not args.skip_core_rim_nm:
         core_rim_nm = Node(
             Function(
@@ -2224,6 +2285,7 @@ if run_phase2:
     wf2_connections = [
         (inputnode2,        GrabPhase1, [('subject_id', 'subject_id')]),
         (inputnode2,        datasink2, [('subject_id', 'container')]),
+        (search_region,     datasink2, [('search_file', 'anat.@Search_Region')]),
 
         (GrabPhase1,        nm_to_template, [('bias_nm', 'moving_image')]),
 
@@ -2237,7 +2299,9 @@ if run_phase2:
         (nm_to_template,    mni_to_nm_atlas, [('inverse_composite_transform', 'transforms')]),
     
         (GrabPhase1,        cnr_seed, [('bias_nm', 'nm_image')]),
-        (mni_to_nm_sn,      cnr_seed, [('output_image', 'native_sn_mask')]),
+        (mni_to_nm_sn,      search_region, [('output_image', 'native_sn_mask')]),
+        (search_region,     cnr_seed, [('search_file', 'native_sn_mask')]),
+
         (mni_to_nm_cp,      cnr_seed, [('output_image', 'native_cp_mask')]),
 
         (cnr_seed,          qc_node, [('seed_out','cnr_mask'), ('cnr_out', 'cnr_map')]), 
@@ -2292,7 +2356,7 @@ if run_phase2:
     if not args.skip_core_rim_nm:
         wf2_connections += [
             (cnr_seed,     core_rim_nm, [('cnr_out', 'cnr_map')]),
-            (mni_to_nm_sn, core_rim_nm, [('output_image', 'native_sn_mask')]),
+            (search_region, core_rim_nm, [('search_file', 'native_sn_mask')]),
             (core_rim_nm,  qc_node, [('mask_out', 'core_rim_nm_mask')]),
             (core_rim_nm,  datasink2, [('mask_out', 'anat.@CoreRim_NM_Mask'),
                                        ('summary_file', 'qc.@CoreRim_NM_Summary')]),
@@ -2909,6 +2973,418 @@ GROUP_QC_COMPONENT_FIELDS = [
 ]
 
 
+
+# =================================================================
+# Poster Figures
+# =================================================================
+
+def save_poster_figure(fig, output_file, dpi=400):
+    """Save a poster figure as PNG (300 dpi) plus SVG and PDF, which stay sharp at any print size."""
+    output_file = Path(output_file)
+    fig.savefig(str(output_file), dpi=dpi, bbox_inches='tight')
+    fig.savefig(str(output_file.with_suffix('.svg')), bbox_inches='tight')
+    fig.savefig(str(output_file.with_suffix('.png')), dpi=dpi, bbox_inches='tight')
+
+POSTER_METHODS = [
+    ('CNR mask', 'dice_cnr_vs_manual', 'hd95_cnr_vs_manual_mm', '#C44E52'),
+    ('CIT168', 'dice_atlas_vs_manual', 'hd95_atlas_vs_manual_mm', '#4C72B0'),
+    ('CIT168 prob', 'dice_prob_atlas_vs_manual', 'hd95_prob_atlas_vs_manual_mm', '#55A868'),
+    ('NMS prob', 'dice_nms_atlas_vs_manual', 'hd95_nms_atlas_vs_manual_mm', '#8172B2'),
+]
+
+
+def build_poster_accuracy_figure(subject_records, output_file):
+    """DICE and HD95 for the CNR mask against the three atlases, with significance marks."""
+    from scipy.stats import wilcoxon
+
+    def holm_adjust(p_values):
+        """Holm correction, because the CNR mask is tested against three atlases."""
+        order = np.argsort(p_values)
+        adjusted = np.ones(len(p_values))
+        running_max = 0.0
+        for rank, index in enumerate(order):
+            value = min(1.0, p_values[index] * (len(p_values) - rank))
+            running_max = max(running_max, value)
+            adjusted[index] = running_max
+        return adjusted
+
+    def stars(p_value):
+        if p_value < 0.001:
+            return '***'
+        if p_value < 0.01:
+            return '**'
+        if p_value < 0.05:
+            return '*'
+        return 'n.s.'
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 5))
+    for axis, metric_index, metric_name, better in [(axes[0], 1, 'DICE vs expert mask', 'higher'),
+                                                    (axes[1], 2, 'HD95 vs expert mask (mm)', 'lower')]:
+        columns = []
+        for label, dice_key, hd95_key, colour in POSTER_METHODS:
+            key = dice_key if metric_index == 1 else hd95_key
+            values = {subject_id: qc.get(key) for subject_id, qc in subject_records
+                      if isinstance(qc.get(key), (int, float)) and np.isfinite(qc.get(key))}
+            columns.append((label, colour, values))
+
+        shared = sorted(set.intersection(*[set(values) for _, _, values in columns]))
+        if not shared:
+            continue
+
+        for position, (label, colour, values) in enumerate(columns):
+            points = np.array([values[subject_id] for subject_id in shared])
+            axis.bar(position, np.median(points), width=0.62, color=colour, alpha=0.35)
+            jitter = (np.random.RandomState(0).rand(len(points)) - 0.5) * 0.22
+            axis.plot(position + jitter, points, 'o', ms=3.5, color=colour, alpha=0.9)
+            axis.text(position, np.median(points), f'{np.median(points):.2f}',
+                      ha='center', va='bottom', fontsize=9, fontweight='bold')
+
+        # The CNR mask (first column) against each atlas, paired across subjects.
+        cnr_points = np.array([columns[0][2][subject_id] for subject_id in shared])
+        raw_p = [wilcoxon(cnr_points, np.array([values[subject_id] for subject_id in shared])).pvalue
+                 for _, _, values in columns[1:]]
+        adjusted_p = holm_adjust(np.array(raw_p))
+
+        span = max(np.max([value for _, _, values in columns for value in values.values()]), 1e-6)
+        for offset, (position, p_value) in enumerate(zip([1, 2, 3], adjusted_p)):
+            height = span * (1.08 + 0.10 * offset)
+            axis.plot([0, 0, position, position],
+                      [height - span * 0.02, height, height, height - span * 0.02], lw=1.0, color='0.3')
+            axis.text(position / 2.0, height, stars(p_value), ha='center', va='bottom', fontsize=10)
+
+        axis.set_xticks(range(len(columns)))
+        axis.set_xticklabels([label for label, _, _ in columns], fontsize=10)
+        axis.set_ylabel(metric_name)
+        axis.set_title(f'{metric_name}\n({better} is better, n = {len(shared)})', fontsize=11)
+        axis.set_ylim(0, span * 1.45)
+        axis.spines[['top', 'right']].set_visible(False)
+
+    fig.tight_layout()
+    save_poster_figure(fig, output_file)
+    plt.close(fig)
+    return output_file
+
+
+POSTER_CONTOUR_METHODS = [
+    ('CNR mask', 'Native_Tractography_Seed_SNc.nii.gz', 'dice_cnr_vs_manual', '#FF3B30'),
+    ('CIT168', 'SNc_trans.nii.gz', 'dice_atlas_vs_manual', '#4C9AFF'),
+    ('NMS prob', 'Native_NMS_SNc_thr025.nii.gz', 'dice_nms_atlas_vs_manual', '#B08BFF'),
+]
+
+
+def build_poster_contour_figure(subject_id, subject_qc, output_path, manual_dir, output_file, rank_label=None):
+    """
+    One row per method, three axial slices per row.
+    The expert mask is filled in gold and the method is drawn on top as an outline. 
+    Each row is labelled with that method's DICE for this subject.
+    """
+    anat_dir = Path(output_path) / subject_id / "anat"
+    nm_data = nib.load(str(anat_dir / "mean_NM_bias_corrected.nii.gz")).get_fdata()
+
+    manual_matches = sorted(Path(manual_dir).glob(
+        f"{subject_id}/anat/{subject_id}_space-NM_label-SN_desc-manual_mask.nii*")) if manual_dir else []
+    if not manual_matches:
+        return None
+    expert_mask = nib.load(str(manual_matches[0])).get_fdata() > 0
+
+    # Choose slices from where the expert mask actually has substance, otherwise
+    # a few stray voxels far from the SN would otherwise place slices in empty space.
+    slice_areas = expert_mask.sum(axis=(0, 1))
+    solid_slices = np.flatnonzero(slice_areas >= 0.10 * slice_areas.max())
+    slices = np.percentile(solid_slices, [25, 50, 75]).astype(int)
+
+    margin = 14
+    in_plane = np.argwhere(np.any(expert_mask, axis=2))
+    rows = slice(max(in_plane[:, 0].min() - margin, 0), in_plane[:, 0].max() + margin + 1)
+    cols = slice(max(in_plane[:, 1].min() - margin, 0), in_plane[:, 1].max() + margin + 1)
+
+    fig, axes = plt.subplots(len(POSTER_CONTOUR_METHODS), len(slices),
+                             figsize=(3.5 * len(slices), 3.2 * len(POSTER_CONTOUR_METHODS)))
+    for row, (label, filename, dice_key, colour) in enumerate(POSTER_CONTOUR_METHODS):
+        mask_path = anat_dir / filename
+        method_mask = nib.load(str(mask_path)).get_fdata() > 0 if mask_path.exists() else None
+        dice_value = subject_qc.get(dice_key)
+
+        for col, z in enumerate(slices):
+            axis = axes[row, col]
+            background = nm_data[rows, cols, z]
+            vmin, vmax = np.percentile(background[background > 0], [2, 99]) if np.any(background > 0) else (0, 1)
+            axis.imshow(np.rot90(background), cmap='gray', vmin=vmin, vmax=vmax)
+
+            expert_plane = np.rot90(expert_mask[rows, cols, z])
+            if expert_plane.any():
+                axis.contourf(expert_plane, levels=[0.5, 1.5], colors=['#FFD400'], alpha=0.30)
+                axis.contour(expert_plane, levels=[0.5], colors='#FFD400', linewidths=1.0)
+            if method_mask is not None and method_mask[rows, cols, z].any():
+                axis.contour(np.rot90(method_mask[rows, cols, z]), levels=[0.5], colors=colour, linewidths=2.0)
+
+            axis.set_xticks([])
+            axis.set_yticks([])
+            if row == 0:
+                axis.set_title(f'axial slice {z}', fontsize=11)
+            if col == 0:
+                dice_text = f'\nDICE {dice_value:.2f}' if isinstance(dice_value, (int, float)) else ''
+                axis.set_ylabel(f'{label}{dice_text}', fontsize=12, color=colour, fontweight='bold')
+
+    handles = [plt.Line2D([0], [0], color='#FFD400', lw=6, alpha=0.5, label='Expert mask (filled)'),
+               plt.Line2D([0], [0], color='0.2', lw=2, label='Method outline')]
+    fig.legend(handles=handles, loc='lower center', ncol=2, frameon=False, fontsize=11)
+    heading = f'{rank_label.capitalize()} case — {subject_id}' if rank_label else subject_id
+    fig.suptitle(f'{heading}: contours of each method against the expert mask', fontsize=13)
+    fig.tight_layout(rect=[0, 0.05, 1, 0.97])
+    save_poster_figure(fig, output_file)
+    plt.close(fig)
+    return output_file
+
+def build_poster_contour_strip(subject_id, subject_qc, output_path, manual_dir, output_file):
+    """
+    Poster version of the contour figure: one slice, one panel per method, large text.
+    """
+    strip_methods = [('NM-defined mask', 'Native_Tractography_Seed_SNc.nii.gz', 'dice_cnr_vs_manual', '#FF3B30'),
+                     ('CIT168 atlas', 'SNc_trans.nii.gz', 'dice_atlas_vs_manual', '#4C9AFF'),
+                     ('NMS-SNc atlas', 'Native_NMS_SNc_thr025.nii.gz', 'dice_nms_atlas_vs_manual', '#B08BFF')]
+
+    anat_dir = Path(output_path) / subject_id / "anat"
+    nm_data = nib.load(str(anat_dir / "mean_NM_bias_corrected.nii.gz")).get_fdata()
+    manual_matches = sorted(Path(manual_dir).glob(
+        f"{subject_id}/anat/{subject_id}_space-NM_label-SN_desc-manual_mask.nii*")) if manual_dir else []
+    if not manual_matches:
+        return None
+    expert_mask = nib.load(str(manual_matches[0])).get_fdata() > 0
+
+    slice_areas = expert_mask.sum(axis=(0, 1))
+    solid_slices = np.flatnonzero(slice_areas >= 0.10 * slice_areas.max())
+    # Show the slice where the expert SN is largest. This rule uses only the expert mask, so it
+    # cannot favour any method. The middle of the "solid" slices can land where the SN curves
+    # between slices, which breaks every outline into fragments.
+    z = int(np.argmax(expert_mask.sum(axis=(0, 1))))
+
+
+    margin = 12
+    in_plane = np.argwhere(np.any(expert_mask, axis=2))
+    rows = slice(max(in_plane[:, 0].min() - margin, 0), in_plane[:, 0].max() + margin + 1)
+    cols = slice(max(in_plane[:, 1].min() - margin, 0), in_plane[:, 1].max() + margin + 1)
+
+    background = nm_data[rows, cols, z]
+    vmin, vmax = np.percentile(background[background > 0], [2, 99]) if np.any(background > 0) else (0, 1)
+    expert_plane = np.rot90(expert_mask[rows, cols, z])
+
+    fig, axes = plt.subplots(1, len(strip_methods), figsize=(4.6 * len(strip_methods), 5.0))
+    for axis, (label, filename, dice_key, colour) in zip(axes, strip_methods):
+        axis.imshow(np.rot90(background), cmap='gray', vmin=vmin, vmax=vmax)
+        axis.contourf(expert_plane, levels=[0.5, 1.5], colors=['#FFD400'], alpha=0.30)
+        axis.contour(expert_plane, levels=[0.5], colors='#FFD400', linewidths=2.0)
+
+        mask_path = anat_dir / filename
+        if mask_path.exists():
+            plane = np.rot90(nib.load(str(mask_path)).get_fdata()[rows, cols, z] > 0)
+            if plane.any():
+                axis.contour(plane, levels=[0.5], colors=colour, linewidths=3.0)
+
+        dice_value = subject_qc.get(dice_key)
+        axis.set_title(label, fontsize=19, color=colour, fontweight='bold', pad=10)
+        if isinstance(dice_value, (int, float)):
+            axis.set_xlabel(f'DICE {dice_value:.2f}', fontsize=22, fontweight='bold', labelpad=8)
+        axis.set_xticks([])
+        axis.set_yticks([])
+
+    fig.suptitle('Expert mask (gold) vs each mask method on the median subject', fontsize=20, y=0.99)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    save_poster_figure(fig, output_file)
+    plt.close(fig)
+    return output_file
+
+
+def poster_subject_intensities(subject_id, output_path):
+    """NM intensities inside the CP reference region and the SN search region."""
+    anat_dir = Path(output_path) / subject_id / "anat"
+    search_file = anat_dir / "Native_SN_Search_Region.nii.gz"
+    if not search_file.exists():
+        search_file = anat_dir / "MNI_SNc_Manual_trans.nii.gz"
+
+    nm_data = nib.load(str(anat_dir / "mean_NM_bias_corrected.nii.gz")).get_fdata()
+    cp_mask = nib.load(str(anat_dir / "MNI_CP_Manual_trans.nii.gz")).get_fdata() > 0
+    sn_mask = nib.load(str(search_file)).get_fdata() > 0
+
+    cp_values = nm_data[cp_mask & np.isfinite(nm_data) & (nm_data > 0)]
+    sn_values = nm_data[sn_mask & np.isfinite(nm_data) & (nm_data > 0)]
+
+    # The same CP reference the pipeline uses: the mode of the CP intensity distribution.
+    intensity_grid = np.linspace(cp_values.min(), cp_values.max(), 1000)
+    cp_reference = float(intensity_grid[np.argmax(gaussian_kde(cp_values)(intensity_grid))])
+    return cp_values, sn_values, cp_reference
+
+
+def build_poster_histogram_figure(subject_id, output_path, output_file):
+    """One subject's CP and SN intensity distributions, with the CR threshold marked."""
+    cp_values, sn_values, cp_reference = poster_subject_intensities(subject_id, output_path)
+
+    search_file = Path(output_path) / subject_id / "anat" / "Native_SN_Search_Region.nii.gz"
+    if not search_file.exists():
+        search_file = Path(output_path) / subject_id / "anat" / "MNI_SNc_Manual_trans.nii.gz"
+    search_mask = nib.load(str(search_file)).get_fdata() > 0
+    cnr_map = nib.load(str(Path(output_path) / subject_id / "cnr" / "Subject_CNR_Map_Smoothed.nii.gz")).get_fdata()
+    threshold_cr = max(float(seed_cnr_floor), float(np.percentile(cnr_map[search_mask], seed_cnr_percentile)))
+    threshold_intensity = cp_reference * (1.0 + threshold_cr)
+
+    all_values = np.concatenate([cp_values, sn_values])
+    bins = np.linspace(np.percentile(all_values, 1), np.percentile(all_values, 99), 60)
+
+    fig, axis = plt.subplots(figsize=(7, 4.2))
+    axis.hist(cp_values, bins=bins, density=True, alpha=0.55, color='#4C72B0', label='Cerebral peduncle (background)')
+    axis.hist(sn_values, bins=bins, density=True, alpha=0.55, color='#C44E52', label='SN search region')
+    axis.axvline(cp_reference, color='#2B4570', ls='--', lw=1.3, label=f'CP reference = {cp_reference:.0f}')
+    axis.axvline(threshold_intensity, color='k', lw=1.3,
+                 label=f'CNR threshold = {threshold_cr:.2f} ({threshold_intensity:.0f})')
+    axis.set_xlabel('NM intensity')
+    axis.set_ylabel('Density')
+    axis.set_title(f'{subject_id} — NM contrast between SN and cerebral peduncle', fontsize=11)
+    axis.legend(fontsize=8.5)
+    axis.spines[['top', 'right']].set_visible(False)
+    fig.tight_layout()
+    save_poster_figure(fig, output_file)
+    plt.close(fig)
+    return output_file
+
+
+def build_poster_histogram_group_figure(subject_ids, output_path, output_file):
+    """Every subject's distributions, each scaled by its own CP reference so they can be pooled."""
+    cp_ratios = []
+    sn_ratios = []
+    for subject_id in subject_ids:
+        try:
+            cp_values, sn_values, cp_reference = poster_subject_intensities(subject_id, output_path)
+        except Exception:
+            continue
+        cp_ratios.append(cp_values / cp_reference)
+        sn_ratios.append(sn_values / cp_reference)
+    if not cp_ratios:
+        return None
+
+    bins = np.linspace(0.6, 1.8, 80)
+    bin_centres = 0.5 * (bins[1:] + bins[:-1])
+    fig, axis = plt.subplots(figsize=(7, 4.2))
+    for ratios, colour in [(cp_ratios, '#4C72B0'), (sn_ratios, '#C44E52')]:
+        curves = np.array([np.histogram(values, bins=bins, density=True)[0] for values in ratios])
+        axis.plot(bin_centres, curves.mean(axis=0), color=colour, lw=2)
+        axis.fill_between(bin_centres, np.percentile(curves, 25, axis=0), np.percentile(curves, 75, axis=0),
+                          color=colour, alpha=0.25)
+    axis.axvline(1.0, color='#2B4570', ls='--', lw=1.2)
+    axis.set_xlabel('NM intensity / CP reference')
+    axis.set_ylabel('Density')
+    axis.set_title(f'NM contrast across the cohort (n = {len(cp_ratios)}; line = mean, band = IQR)', fontsize=11)
+    axis.legend(handles=[plt.Line2D([0], [0], color='#4C72B0', lw=2, label='Cerebral peduncle'),
+                         plt.Line2D([0], [0], color='#C44E52', lw=2, label='SN search region')], fontsize=9)
+    axis.spines[['top', 'right']].set_visible(False)
+    fig.tight_layout()
+    save_poster_figure(fig, output_file)
+    plt.close(fig)
+    return output_file
+
+def nm_blind_control_rows(subject_ids, output_path, manual_dir):
+    """
+    Compare three masks per subject against the expert mask.
+    drawing: the propagated SN drawing (registration only).
+    nm_blind: the same share of the search region the seed keeps (top 45% at percentile 55),
+               but chosen by depth inside the region instead of by NM contrast.
+    nm_seed: the NM contrast seed the pipeline produces.
+    """
+    def dice(a, b):
+        return float(2 * (a & b).sum() / (a.sum() + b.sum()))
+
+    def hd95(a, b, spacing):
+        surface_a = a & ~binary_erosion(a)
+        surface_b = b & ~binary_erosion(b)
+        distances = np.concatenate([distance_transform_edt(~surface_b, sampling=spacing)[surface_a],
+                                    distance_transform_edt(~surface_a, sampling=spacing)[surface_b]])
+        return float(np.percentile(distances, 95))
+
+    rows = []
+    for subject_id in subject_ids:
+        anat_dir = Path(output_path) / subject_id / "anat"
+        seed_file = anat_dir / "Native_Tractography_Seed_SNc.nii.gz"
+        search_file = anat_dir / "Native_SN_Search_Region.nii.gz"
+        drawing_file = anat_dir / "MNI_SNc_Manual_trans.nii.gz"
+        manual_matches = sorted(Path(manual_dir).glob(
+            f"{subject_id}/anat/{subject_id}_space-NM_label-SN_desc-manual_mask.nii*"))
+        if not (seed_file.exists() and search_file.exists() and drawing_file.exists() and manual_matches):
+            continue
+
+        seed_img = nib.load(str(seed_file))
+        spacing = tuple(float(z) for z in seed_img.header.get_zooms()[:3])
+        seed = seed_img.get_fdata() > 0
+        search = nib.load(str(search_file)).get_fdata() > 0
+        drawing = nib.load(str(drawing_file)).get_fdata() > 0
+        expert = nib.load(str(manual_matches[0])).get_fdata() > 0
+        if not (seed.any() and search.any() and drawing.any() and expert.any()):
+            continue
+
+        # Work in a box around the SN so the distance transforms stay fast.
+        corners = np.argwhere(search | drawing | expert)
+        box = tuple(slice(max(low - 12, 0), high + 13) for low, high in zip(corners.min(0), corners.max(0)))
+        seed, search, drawing, expert = seed[box], search[box], drawing[box], expert[box]
+
+        # NM-blind control: keep the same share of the search region as the seed threshold does,
+        # but take the voxels furthest from the region's edge instead of the brightest ones.
+        n_keep = max(1, int(round((1 - seed_cnr_percentile / 100) * search.sum())))
+        depth = distance_transform_edt(search, sampling=spacing)
+        deepest_first = np.argsort(-depth[search], kind="stable")[:n_keep]
+        nm_blind = np.zeros_like(search)
+        nm_blind[tuple(np.argwhere(search)[deepest_first].T)] = True
+
+        rows.append({
+            "subject_id": subject_id,
+            "search_region_voxels": int(search.sum()),
+            "nm_blind_voxels": int(nm_blind.sum()),
+            "nm_seed_voxels": int(seed.sum()),
+            "dice_drawing": dice(drawing, expert),
+            "dice_nm_blind": dice(nm_blind, expert),
+            "dice_nm_seed": dice(seed, expert),
+            "hd95_drawing": hd95(drawing, expert, spacing),
+            "hd95_nm_blind": hd95(nm_blind, expert, spacing),
+            "hd95_nm_seed": hd95(seed, expert, spacing),
+        })
+    return rows
+
+
+def build_nm_blind_control_figure(rows, output_file):
+    """Per subject: registration only -> same share of the region without NM -> NM contrast seed."""
+    columns = [("drawing", "Propagated drawing\n(registration only)", "#4C72B0"),
+               ("nm_blind", "45% of search region,\nno NM contrast", "#8C8C8C"),
+               ("nm_seed", "NM contrast\nseed", "#FF3B30")]
+    fig, axes = plt.subplots(1, 2, figsize=(11, 5))
+
+    for axis, metric, label, better in [(axes[0], "dice", "DICE vs expert mask", "higher"),
+                                        (axes[1], "hd95", "HD95 vs expert mask (mm)", "lower")]:
+        values = [np.array([row[f"{metric}_{key}"] for row in rows]) for key, _, _ in columns]
+
+        for subject_values in zip(*values):
+            axis.plot([0, 1, 2], subject_values, color="0.7", lw=0.8, alpha=0.6)
+        for position, ((_, _, colour), column_values) in enumerate(zip(columns, values)):
+            axis.plot(np.full(len(column_values), position), column_values, "o", color=colour, ms=5)
+            axis.text(position + 0.08, np.median(column_values), f"{np.median(column_values):.2f}",
+                      fontsize=10, fontweight="bold", va="center")
+        axis.plot([0, 1, 2], [np.median(column_values) for column_values in values],
+                  color="k", lw=2.5, marker="s", ms=8)
+
+        blind, seed = values[1], values[2]
+        improved = int((seed > blind).sum()) if better == "higher" else int((seed < blind).sum())
+        p_value = wilcoxon(seed, blind).pvalue if np.any(seed != blind) else float("nan")
+        axis.set_title(f"{label} ({better} is better)\nNM seed vs no-NM control: better in "
+                       f"{improved}/{len(seed)}, p = {p_value:.2g}", fontsize=10)
+        axis.set_xticks([0, 1, 2])
+        axis.set_xticklabels([column_label for _, column_label, _ in columns])
+        axis.set_xlim(-0.4, 2.5)
+        axis.spines[["top", "right"]].set_visible(False)
+
+    fig.suptitle(f"Registration alone, position alone, and NM contrast (n = {len(rows)})", fontsize=12)
+    fig.tight_layout()
+    save_poster_figure(fig, output_file)
+    plt.close(fig)
+    return output_file
+
+
+
 # =================================================================
 # Group QC Plotting
 # =================================================================
@@ -3402,7 +3878,54 @@ def run_group_qc_stage(output_path, manual_dir, selected_subjects, test_mode=Fal
         plt.close(fig6)
         log.info(f"Boundary-vs-core CR plot saved: {out6}")
 
+    # =================================================================
+    # NM-Blind Control
+    # =================================================================
+    if manual_dir is not None:
+        control_rows = nm_blind_control_rows([subject_id for subject_id, _ in subject_records],
+                                                output_path, manual_dir)
+        if control_rows:
+            control_csv = group_qc_output_path('Poster_NM_Blind_Control.csv')
+            write_csv(control_csv, list(control_rows[0].keys()), control_rows)
+            log.info(f"NM-blind control table saved: {control_csv}")
 
+            control_png = group_qc_output_path('Poster_NM_Blind_Control.png')
+            build_nm_blind_control_figure(control_rows, control_png)
+            log.info(f"NM-blind control figure saved: {control_png}")
+
+    # =================================================================
+    # Poster Figures
+    # =================================================================
+    ranked_records = sorted([(subject_id, subject_qc) for subject_id, subject_qc in subject_records
+                            if finite_float(subject_qc.get('dice_cnr_vs_manual')) is not None],
+                            key=lambda record: record[1]['dice_cnr_vs_manual'])
+    if ranked_records:
+        accuracy_png = group_qc_output_path('Poster_Accuracy.png')
+        build_poster_accuracy_figure(subject_records, accuracy_png)
+        log.info(f"Poster accuracy figure saved: {accuracy_png}")
+
+        ranked_subjects = {'worst': ranked_records[0][0],
+                        'median': ranked_records[len(ranked_records) // 2][0],
+                        'best': ranked_records[-1][0]}
+        record_lookup = dict(ranked_records)
+        for rank_label, subject_id in ranked_subjects.items():
+            contour_png = group_qc_output_path(f'Poster_Contours_{rank_label}_{subject_id}.png')
+            if build_poster_contour_figure(subject_id, record_lookup[subject_id], output_path, manual_dir, contour_png, rank_label):
+                log.info(f"Poster contour figure saved: {contour_png}")
+
+        strip_subject = ranked_subjects['median']
+        strip_png = group_qc_output_path(f'Poster_Strip_{strip_subject}.png')
+        if build_poster_contour_strip(strip_subject, record_lookup[strip_subject], output_path, manual_dir, strip_png):
+            log.info(f"Poster contour strip saved: {strip_png}")
+
+        histogram_png = group_qc_output_path(f"Poster_CNR_Histogram_{ranked_subjects['median']}.png")
+        build_poster_histogram_figure(ranked_subjects['median'], output_path, histogram_png)
+        log.info(f"Poster histogram saved: {histogram_png}")
+
+        group_histogram_png = group_qc_output_path('Poster_CNR_Histogram_Group.png')
+        build_poster_histogram_group_figure([subject_id for subject_id, _ in subject_records],
+                                            output_path, group_histogram_png)
+        log.info(f"Poster group histogram saved: {group_histogram_png}")
 
 if run_group_qc:
     run_group_qc_stage(Path(output_base), manual_dir, subjects, test_mode=args.test)
