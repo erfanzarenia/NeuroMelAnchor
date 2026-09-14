@@ -32,6 +32,7 @@ import nibabel as nib
 from scipy import ndimage
 
 def sh(cmd):
+    """Run a shell command, raising if it fails."""
     subprocess.run(cmd, shell=True, check=True, capture_output=True)
 
 def build_4d_mag(anat, sub, run, out_path):
@@ -146,7 +147,7 @@ def process_dataset(bids, derivs, tes_sec):
                       f"P95={np.percentile(r2[m], 95):.1f}  "
                       f"voxels={int(m.sum())}")
             except Exception as e:
-                print(f"  run-{run}: FAILED — {e}")
+                print(f"  run-{run}: FAILED: {e}")
                 continue
 
         # Within-subject mean across runs

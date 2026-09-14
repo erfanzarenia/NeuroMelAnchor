@@ -80,6 +80,7 @@ midline_exclusion_mm = 5.0  # exclude voxels within this distance of the midline
 # =============================================================================
 
 def hard_gc():
+    """Release Python and CUDA memory between registrations."""
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -148,6 +149,7 @@ def collect_subject_inputs(output_root):
 # =============================================================================
 
 def crop_qc_records(crops, ids, template):
+    """Per-subject QC records comparing each crop with the current template."""
     template_arr = sitk.GetArrayFromImage(template).astype(np.float32)
     records = []
 
@@ -346,6 +348,7 @@ def build_template_mask(trimmed_prior_mni, reference_image_mni, dilation_mm=4.0)
 
 
 def split_mni_prior(mni_prior):
+    """Split a prior at the midline into left (LPS x >= 0) and right halves."""
     prior_array = sitk.GetArrayFromImage(mni_prior).astype(np.float32)
     left_array = np.zeros_like(prior_array, dtype=np.uint8)
     right_array = np.zeros_like(prior_array, dtype=np.uint8)
@@ -384,6 +387,7 @@ def exclude_midline_band(prior_mask, half_width_mm):
 
 
 def weighted_centroid(image, search_mask):
+    """Intensity-weighted centroid, in physical coordinates, of the brightest voxels in a search mask."""
     image_array = sitk.GetArrayFromImage(image).astype(np.float32)
     search_array = sitk.GetArrayFromImage(search_mask).astype(bool)
     finite_mask = np.isfinite(image_array)
@@ -472,6 +476,7 @@ def spatial_crop(image, z_lo, z_hi, y_lo, y_hi, x_lo, x_hi):
     return out
 
 def prepare_subject_crops(subject_records, work_dir, mni_prior_path, save_subject_crops):
+    """Centroid-align, mask, crop and normalize every subject, then build the initial template."""
     if not subject_records:
         raise FileNotFoundError("No subject records provided.")
 
@@ -715,9 +720,10 @@ def build_fireants_template(
         outer_iterations, use_rigid, device, save_iterations,
         shape_avg=False, laplacian_passes=0, conv_tol=0.0, legacy_sharpen=False,
         shape_avg_step=0.25):
+    """Iteratively register every subject to the template and rebuild it as a weighted average."""
     template = initial
 
-    # SN/midbrain prior mask on the reference grid — used for QC metrics AND to
+    # SN/midbrain prior mask on the reference grid, used for QC metrics AND to
     # restrict the correlation weights to the structure we care about.
     full_mask = sitk.ReadImage(str(work_dir / "SN_template_mask.nii.gz"), sitk.sitkUInt8)
     mask_on_ref = sitk.Resample(full_mask, reference, sitk.Transform(3, sitk.sitkIdentity),
