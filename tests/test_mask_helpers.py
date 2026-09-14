@@ -207,18 +207,6 @@ def test_build_sn_roi_mask_rejects_an_empty_seed(nifti_factory):
         build_sn_roi_mask(seed_path)
 
 
-# ---------------------------------------------------------------------- binarize_mask
-
-def test_binarize_mask_thresholds_inclusively(nifti_factory):
-    binarize_mask = load_functions("binarize_mask")["binarize_mask"]
-
-    data = np.array([[[0.0, 0.49], [0.5, 1.0]]], dtype=np.float32)
-    out = binarize_mask(nifti_factory("prob.nii.gz", data), threshold=0.5)
-
-    assert nib.load(out).get_fdata().sum() == 2
-    assert nib.load(out).get_data_dtype() == np.uint8
-
-
 # ------------------------------------------------------------------ compute_motion_params
 
 def test_compute_motion_params_reports_parameter_ranges(tmp_path):
@@ -289,3 +277,87 @@ def test_overrides_win_over_the_cohort_defaults(resolve_input_patterns):
         t1_override="{subject_id}/anat/custom_T1w.nii.gz")
     assert nm == "{subject_id}/anat/custom_echo-3.nii.gz"
     assert t1 == "{subject_id}/anat/custom_T1w.nii.gz"
+
+
+# ---------------------------------------------------------------- dilate_search_region
+
+@pytest.fixture(scope="module")
+def dilate_search_region():
+    return load_functions("dilate_search_region")["dilate_search_region"]
+
+
+def test_search_region_without_dilation_is_the_binarised_drawing(nifti_factory, dilate_search_region):
+    """--search_dilation_mm 0 must reproduce the propagated drawing exactly."""
+    drawing = np.zeros((9, 9, 9), dtype=np.float32)
+    drawing[3:6, 3:6, 3:6] = 1
+
+    out = dilate_search_region(nifti_factory("sn.nii.gz", drawing), dilation_mm=0.0)
+
+    region = nib.load(out)
+    assert Path(out).name == "Native_SN_Search_Region.nii.gz"
+    assert region.get_data_dtype() == np.uint8
+    assert np.array_equal(region.get_fdata() > 0, drawing > 0)
+
+
+def test_search_region_grows_by_millimetres_on_anisotropic_voxels(nifti_factory, dilate_search_region):
+    drawing = np.zeros((21, 21, 21), dtype=np.float32)
+    drawing[10, 10, 10] = 1
+    # 2 mm is 4 voxels along x (0.5 mm), 2 along y (1 mm) and 1 along z (2 mm).
+    path = nifti_factory("sn.nii.gz", drawing, voxel_size=(0.5, 1.0, 2.0))
+
+    region = nib.load(dilate_search_region(path, dilation_mm=2.0)).get_fdata() > 0
+
+    assert region[14, 10, 10] and not region[15, 10, 10]
+    assert region[10, 12, 10] and not region[10, 13, 10]
+    assert region[10, 10, 11] and not region[10, 10, 12]
+    assert region[drawing > 0].all(), "the grown region must contain the drawing"
+
+
+# ----------------------------------------------------------- extract_tractography_seed
+
+def test_seed_closing_never_leaves_the_search_region(nifti_factory):
+    """
+    The v3.0 morphological closing is intersected with the search region.
+
+    Two bright slabs sit either side of a one-voxel gap that is outside the search
+    region. Closing the seed would bridge that gap; the intersection must remove it.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import scipy.ndimage as ndi
+    extract_tractography_seed = load_functions("extract_tractography_seed")["extract_tractography_seed"]
+
+    shape = (24, 24, 24)
+    inner = (slice(6, 19), slice(6, 19))
+    nm = np.zeros(shape, dtype=np.float32)
+    search = np.zeros(shape, dtype=np.float32)
+    cp = np.zeros(shape, dtype=np.float32)
+
+    # Search region: slabs at x = 5..9 and x = 11..15, brightest beside the gap at x = 10.
+    for x, intensity in [*zip(range(5, 10), [120, 140, 160, 180, 200]),
+                         *zip(range(11, 16), [200, 180, 160, 140, 120])]:
+        nm[(x, *inner)] = intensity
+        search[(x, *inner)] = 1
+
+    # Cerebral peduncle: background intensity around 100, with spread for the KDE.
+    cp_block = (slice(18, 23), *inner)
+    nm[cp_block] = 100 + np.random.RandomState(0).normal(0, 3, size=nm[cp_block].shape)
+    cp[cp_block] = 1
+
+    _, seed_out, _, diagnostics_out = extract_tractography_seed(
+        nifti_factory("nm.nii.gz", nm), nifti_factory("search.nii.gz", search),
+        nifti_factory("cp.nii.gz", cp),
+        cnr_floor=0.05, cnr_percentile=55, min_cluster_vox=15, keep_components=2)
+
+    seed = nib.load(seed_out).get_fdata() > 0
+    inside = search > 0
+
+    assert seed.any()
+    assert not (seed & ~inside).any(), "seed voxels outside the search region"
+    assert not seed[10].any(), "closing bridged the gap outside the search region"
+    # Closing alone would fill the gap, so the assertions above really test the intersection.
+    assert ndi.binary_closing(seed, structure=np.ones((3, 3, 3), dtype=bool))[10].any()
+
+    diagnostics = json.loads(Path(diagnostics_out).read_text())
+    assert diagnostics["seed_voxels"] == int(seed.sum())
+    assert diagnostics["search_roi_voxels"] == int(inside.sum())

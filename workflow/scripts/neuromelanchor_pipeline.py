@@ -9,7 +9,7 @@ nigra.
 
 Pipeline Stages
 -------------------------------
-Stage 1  — Forward Normalisation
+Stage 1: Forward Normalisation
     1. Gunzip NM volumes
     2. SPM Realign (motion correction, register to mean)
     3. ANTs N4BiasFieldCorrection on each realigned volume
@@ -22,12 +22,12 @@ Stage 1  — Forward Normalisation
     10. Generate registration QC plots, run-similarity QC, and motion metrics
     11. Create group-average NM template
  
-Segment — Manual ROI Segmentation (ITK-SNAP)
+Segment: Manual ROI Segmentation (ITK-SNAP)
     Interactive segmentation of cerebral peduncle (label 1) and substantia nigra (label 2) on the
     group-average NM template.  
     Masks are saved to resources/tpl-MNI152NLin2009cAsym/.
  
-Stage 2  — Inverse Normalisation and CNR Seed Extraction
+Stage 2: Inverse Normalisation and CNR Seed Extraction
     1. Register subject NM mean to group template (Rigid + Affine + SyN)
     2. Warp segmented SN and CP masks to native NM space via inverse transforms
     3. Compute CNR map and NM-defined seed mask
@@ -35,7 +35,7 @@ Stage 2  — Inverse Normalisation and CNR Seed Extraction
     5. Compute per-subject QC metrics and dashboards
             (optional: assess against manual masks if --manual_dir is provided)
 
-Group QC — Rebuild dashboards and summary plots from existing Stage 2 outputs
+Group QC: Rebuild dashboards and summary plots from existing Stage 2 outputs
     This stage is intentionally cheap: it does not rerun registration or mask generation.
  
 Output Structure (per subject)
@@ -49,7 +49,7 @@ Output Structure (per subject)
 
 Usage
 -------------------------------
-    python BrainHack_NM_Nipype_Pipeline.py 
+    python neuromelanchor_pipeline.py 
         --project_root /path/to/project 
         --design_dir   /path/to/bids_root 
         --output_root  /path/to/outputs 
@@ -59,16 +59,17 @@ Usage
         --test                              test run on the first subject
         --smooth 0                          defaults to 0; set a smoothing FWHM in mm if needed
         --manual_dir  /path/to/manual_mask  for per-subject manual SN masks in Stage 2 QC
+        --search_dilation_mm 0              grow the propagated SN search region by this many mm
 
-### Limitations
+Limitations
+-------------------------------
+Currently the floor is not effectively introduced.
+The threshold is a simple within-subject percentile.
+The top 45% of SN voxels are labelled as SN; the remaining 55% are labelled as noise and removed.
+This means the weaker subjects likely don't look as good and need to be reflected upon.
+The floor is supposed to help stop this, but it is certainly too low to ever work.
 
-Currently the floor is not effectively introduced. 
-The threshold is a simple within-subject percentile. 
-THe top 45% of SN voxels are labelled as SN, the remaining 55% are labelled as noise and removed.
-This means if taht the weaker subjects, likely dont look as good and need to be reflected upon.
-The floor is supposed to help stop this, but is certainly too low to ever work.
-
-Contrast Ratio is actually used here instead of Contrast to Noise Ratio
+A contrast ratio is actually used here instead of a contrast-to-noise ratio.
 ================================================================================
 By NEXUS
 ================================================================================
@@ -113,6 +114,7 @@ from nipype.interfaces.ants import Registration, BrainExtraction, ApplyTransform
 # =================================================================
 
 def get_container_cmd(project_root):
+    """Return the command prefix that runs Python in the FireANTs container, or None if no runtime is found."""
     sif = Path(project_root) / "fireants.sif"
     if sif.exists() and shutil.which("singularity"):
         return ["singularity", "exec", "--nv", f"--bind={project_root}", str(sif), "python"]
@@ -671,12 +673,6 @@ def combine_transforms(t1_to_mni_composite, nm_to_t1_composite):
     """Return transforms in the order expected by ANTs ApplyTransforms."""
     return [t1_to_mni_composite, nm_to_t1_composite]
 
-def combine_prealign_transforms(nm_to_t1_inverse, t1_to_mni_inverse):
-    return [nm_to_t1_inverse, t1_to_mni_inverse]
-
-def combine_downstream_inverse(t1_to_mni_inverse, nm_to_t1_inverse):
-    return [t1_to_mni_inverse, nm_to_t1_inverse]
-
 def generate_qc_nm(nm_mni_image, t1_template_image):
     import os
     import matplotlib
@@ -833,6 +829,7 @@ def extract_tractography_seed(nm_image, native_sn_mask, native_cp_mask, cnr_floo
         raise ValueError("No finite CNR values found inside the native SN search mask.")
     adaptive_cnr_bound = float(np.percentile(sn_cnr_values, float(cnr_percentile)))
     lower_cnr_bound = max(float(cnr_floor), adaptive_cnr_bound)
+    # The upper bound drops the brightest 1% of search-region voxels.
     upper_cnr_bound = float(np.percentile(sn_cnr_values, 99))
 
     candidate_seed_mask = (
@@ -844,6 +841,7 @@ def extract_tractography_seed(nm_image, native_sn_mask, native_cp_mask, cnr_floo
     final_seed_mask = keep_largest_components(candidate_seed_mask, min_size=min_cluster_vox, max_components=keep_components,
     )
 
+    # Close small gaps in the mask without letting it grow outside the search region.
     final_seed_mask = (ndi.binary_closing(final_seed_mask, structure=np.ones((3, 3, 3), dtype=bool))
                        & sn_mask).astype(np.uint8)
 
@@ -1056,6 +1054,7 @@ def compute_mask_qc(
     manual_mask=None,
     cnr_map=None,
 ):
+    """Score the NM, core-rim and atlas masks against each other and any manual mask, and write SN_Mask_QC.json with QC flags."""
     import os
     import json
     import numpy as np
@@ -1312,7 +1311,7 @@ def compute_mask_qc(
         raw_dice = qc['dice_cnr_vs_atlas']
         anch_dice = qc['dice_cnr_vs_anchored_atlas']
         if raw_dice is not None and anch_dice is not None and anch_dice < raw_dice - 0.05:
-            qc['flags'].append('Anchoring degraded DICE vs CNR seed — check ROI mask and CNR quality')
+            qc['flags'].append('Anchoring degraded DICE vs CNR seed; check ROI mask and CNR quality')
 
     prob_data = None
     pair_cnr_prob = None
@@ -1454,21 +1453,21 @@ def compute_mask_qc(
             qc['pairwise']['anchored_atlas_vs_manual'] = pair_anch_manual
 
         if qc['dice_cnr_vs_manual'] is not None and qc['dice_cnr_vs_manual'] < 0.5:
-            qc['flags'].append('Low DICE CNR vs manual — automated mask diverges from expert')
+            qc['flags'].append('Low DICE CNR vs manual; automated mask diverges from expert')
         if qc['dice_atlas_vs_manual'] is not None and qc['dice_atlas_vs_manual'] < 0.5:
-            qc['flags'].append('Low DICE atlas vs manual — registration or atlas fit may be poor')
+            qc['flags'].append('Low DICE atlas vs manual; registration or atlas fit may be poor')
         if qc['dice_prob_atlas_vs_manual'] is not None and qc['dice_prob_atlas_vs_manual'] < 0.5:
-            qc['flags'].append('Low DICE probabilistic atlas vs manual — threshold or atlas fit may be poor')
+            qc['flags'].append('Low DICE probabilistic atlas vs manual; threshold or atlas fit may be poor')
         if qc['dice_nms_atlas_vs_manual'] is not None and qc['dice_nms_atlas_vs_manual'] < 0.5:
-            qc['flags'].append('Low DICE NMS atlas vs manual — threshold or atlas fit may be poor')
+            qc['flags'].append('Low DICE NMS atlas vs manual; threshold or atlas fit may be poor')
         if qc['dice_core_rim_nm_vs_manual'] is not None and qc['dice_core_rim_nm_vs_manual'] < 0.5:
-            qc['flags'].append('Low DICE core-rim NM vs manual — boundary thresholds may need adjustment')
+            qc['flags'].append('Low DICE core-rim NM vs manual; boundary thresholds may need adjustment')
         if (
             qc['dice_core_rim_nm_vs_manual'] is not None
             and qc['dice_cnr_vs_manual'] is not None
             and qc['dice_core_rim_nm_vs_manual'] < qc['dice_cnr_vs_manual'] - 0.05
         ):
-            qc['flags'].append('Core-rim NM reduced DICE vs original NM — check core/rim thresholds')
+            qc['flags'].append('Core-rim NM reduced DICE vs original NM; check core/rim thresholds')
         if qc['hd95_cnr_vs_manual_mm'] is not None and qc['hd95_cnr_vs_manual_mm'] > 5.0:
             qc['flags'].append('High HD95 CNR vs manual (>5 mm)')
         if qc['hd95_core_rim_nm_vs_manual_mm'] is not None and qc['hd95_core_rim_nm_vs_manual_mm'] > 5.0:
@@ -1483,21 +1482,21 @@ def compute_mask_qc(
             and atlas_dice_vs_manual is not None
             and anchored_dice_vs_manual < atlas_dice_vs_manual - 0.05
         ):
-            qc['flags'].append('Anchoring reduced DICE vs manual — CNR seed may be poorly defined')
+            qc['flags'].append('Anchoring reduced DICE vs manual; CNR seed may be poorly defined')
 
     if qc['n_voxels_cnr'] < 20:
-        qc['flags'].append('CNR seed very small (<20 voxels) — check CNR map and SN registration')
+        qc['flags'].append('CNR seed very small (<20 voxels); check CNR map and SN registration')
     cnr_components = qc['mask_components']['cnr']
     if cnr_components['n_components'] > 2:
-        qc['flags'].append('CNR seed has >2 connected components — HD95 may be inflated by islands')
+        qc['flags'].append('CNR seed has >2 connected components; HD95 may be inflated by islands')
     if (
         cnr_components['largest_component_fraction'] is not None
         and np.isfinite(cnr_components['largest_component_fraction'])
         and cnr_components['largest_component_fraction'] < 0.8
     ):
-        qc['flags'].append('CNR seed largest component <80% of mask — possible fragmentation')
+        qc['flags'].append('CNR seed largest component <80% of mask; possible fragmentation')
     if qc['dice_cnr_vs_atlas'] is not None and qc['dice_cnr_vs_atlas'] < 0.4:
-        qc['flags'].append('Low DICE CNR vs atlas (<0.4) — possible registration failure')
+        qc['flags'].append('Low DICE CNR vs atlas (<0.4); possible registration failure')
     if qc['hd95_cnr_vs_atlas_mm'] is not None and qc['hd95_cnr_vs_atlas_mm'] > 5.0:
         qc['flags'].append('High HD95 CNR vs atlas (>5 mm)')
     if qc['centroid_distance_cnr_vs_atlas_mm'] is not None and qc['centroid_distance_cnr_vs_atlas_mm'] > 3.0:
@@ -1559,20 +1558,6 @@ def build_sn_roi_mask(cnr_seed, dilation_mm=6.0):
     roi_header.set_data_dtype(np.uint8)
     nib.save(nib.Nifti1Image(roi_mask.astype(np.uint8), seed_img.affine, roi_header), roi_file)
     return roi_file
-
-def binarize_mask(prob_mask, threshold=0.5, out_name="Native_Binary_Mask.nii.gz"):
-    import os
-    import numpy as np
-    import nibabel as nib
-
-    img = nib.load(prob_mask)
-    data = img.get_fdata()
-    binary = (data >= float(threshold)).astype(np.uint8)
-    header = img.header.copy()
-    header.set_data_dtype(np.uint8)
-    out = os.path.abspath(out_name)
-    nib.save(nib.Nifti1Image(binary, img.affine, header), out)
-    return out
 
 # =================================================================
 # Phase 1: Forward Normalization
@@ -2455,6 +2440,8 @@ def build_stage2_output_manifest(subject_id, output_path, manual_dir=None):
         nms_matches += sorted(anat_dir.glob("Native_NMS_SNc_thr*.nii"))
         nms_mask = nms_matches[0] if nms_matches else None
 
+    # DataSink keeps the ANTs default name for the anchored atlas; CIT168_Anchored is only a fallback.
+
     anchored_mask = anat_dir / "transform_Warped.nii.gz"
     if not anchored_mask.exists():
         anchored_mask = anat_dir / "transform_Warped.nii"
@@ -2635,6 +2622,8 @@ def build_subject_qc_dashboard(subject_id, output_path, manual_dir=None):
         nms_matches = sorted(anat_dir.glob("Native_NMS_SNc_thr*.nii.gz"))
         nms_matches += sorted(anat_dir.glob("Native_NMS_SNc_thr*.nii"))
         nms_mask = nms_matches[0] if nms_matches else None
+
+    # DataSink keeps the ANTs default name for the anchored atlas; CIT168_Anchored is only a fallback.
 
     anchored_mask = anat_dir / "transform_Warped.nii.gz"
     if not anchored_mask.exists():
@@ -2979,11 +2968,10 @@ GROUP_QC_COMPONENT_FIELDS = [
 # =================================================================
 
 def save_poster_figure(fig, output_file, dpi=400):
-    """Save a poster figure as PNG (300 dpi) plus SVG and PDF, which stay sharp at any print size."""
+    """Save a poster figure as PNG and as SVG, which stays sharp at any print size."""
     output_file = Path(output_file)
-    fig.savefig(str(output_file), dpi=dpi, bbox_inches='tight')
-    fig.savefig(str(output_file.with_suffix('.svg')), bbox_inches='tight')
     fig.savefig(str(output_file.with_suffix('.png')), dpi=dpi, bbox_inches='tight')
+    fig.savefig(str(output_file.with_suffix('.svg')), bbox_inches='tight')
 
 POSTER_METHODS = [
     ('CNR mask', 'dice_cnr_vs_manual', 'hd95_cnr_vs_manual_mm', '#C44E52'),
@@ -3041,8 +3029,12 @@ def build_poster_accuracy_figure(subject_records, output_file):
 
         # The CNR mask (first column) against each atlas, paired across subjects.
         cnr_points = np.array([columns[0][2][subject_id] for subject_id in shared])
-        raw_p = [wilcoxon(cnr_points, np.array([values[subject_id] for subject_id in shared])).pvalue
-                 for _, _, values in columns[1:]]
+        raw_p = []
+        for _, _, values in columns[1:]:
+            atlas_points = np.array([values[subject_id] for subject_id in shared])
+            # wilcoxon raises when every paired difference is zero, which tied values can cause in small groups.
+            raw_p.append(wilcoxon(cnr_points, atlas_points).pvalue
+                         if np.any(cnr_points != atlas_points) else float('nan'))
         adjusted_p = holm_adjust(np.array(raw_p))
 
         span = max(np.max([value for _, _, values in columns for value in values.values()]), 1e-6)
@@ -3129,7 +3121,7 @@ def build_poster_contour_figure(subject_id, subject_qc, output_path, manual_dir,
     handles = [plt.Line2D([0], [0], color='#FFD400', lw=6, alpha=0.5, label='Expert mask (filled)'),
                plt.Line2D([0], [0], color='0.2', lw=2, label='Method outline')]
     fig.legend(handles=handles, loc='lower center', ncol=2, frameon=False, fontsize=11)
-    heading = f'{rank_label.capitalize()} case — {subject_id}' if rank_label else subject_id
+    heading = f'{rank_label.capitalize()} case ({subject_id})' if rank_label else subject_id
     fig.suptitle(f'{heading}: contours of each method against the expert mask', fontsize=13)
     fig.tight_layout(rect=[0, 0.05, 1, 0.97])
     save_poster_figure(fig, output_file)
@@ -3209,7 +3201,7 @@ def poster_subject_intensities(subject_id, output_path):
     cp_values = nm_data[cp_mask & np.isfinite(nm_data) & (nm_data > 0)]
     sn_values = nm_data[sn_mask & np.isfinite(nm_data) & (nm_data > 0)]
 
-    # The same CP reference the pipeline uses: the mode of the CP intensity distribution.
+    # The pipeline's CP reference (the KDE mode), but from the uneroded CP mask, so it can differ slightly.
     intensity_grid = np.linspace(cp_values.min(), cp_values.max(), 1000)
     cp_reference = float(intensity_grid[np.argmax(gaussian_kde(cp_values)(intensity_grid))])
     return cp_values, sn_values, cp_reference
@@ -3225,6 +3217,7 @@ def build_poster_histogram_figure(subject_id, output_path, output_file):
     search_mask = nib.load(str(search_file)).get_fdata() > 0
     cnr_map = nib.load(str(Path(output_path) / subject_id / "cnr" / "Subject_CNR_Map_Smoothed.nii.gz")).get_fdata()
     threshold_cr = max(float(seed_cnr_floor), float(np.percentile(cnr_map[search_mask], seed_cnr_percentile)))
+    # Illustrative only: the pipeline thresholds the smoothed ratio map and uses an eroded CP mask.
     threshold_intensity = cp_reference * (1.0 + threshold_cr)
 
     all_values = np.concatenate([cp_values, sn_values])
@@ -3238,7 +3231,7 @@ def build_poster_histogram_figure(subject_id, output_path, output_file):
                  label=f'CNR threshold = {threshold_cr:.2f} ({threshold_intensity:.0f})')
     axis.set_xlabel('NM intensity')
     axis.set_ylabel('Density')
-    axis.set_title(f'{subject_id} — NM contrast between SN and cerebral peduncle', fontsize=11)
+    axis.set_title(f'{subject_id}: NM contrast between SN and cerebral peduncle', fontsize=11)
     axis.legend(fontsize=8.5)
     axis.spines[['top', 'right']].set_visible(False)
     fig.tight_layout()
@@ -3412,7 +3405,7 @@ def run_group_qc_stage(output_path, manual_dir, selected_subjects, test_mode=Fal
         return output_path / requested_path.name
 
     if not qc_files:
-        log.info("No QC JSON files found — skipping group QC plots.")
+        log.info("No QC JSON files found; skipping group QC plots.")
         return
 
     subject_records = []
@@ -3660,7 +3653,7 @@ def run_group_qc_stage(output_path, manual_dir, selected_subjects, test_mode=Fal
     ax1.set_xticks(range(1, current_pos))
     ax1.set_xticklabels(x_labels, rotation=15)
     ax1.set_ylabel("DICE coefficient", fontsize=11)
-    ax1.set_title("SN Mask Overlap — DICE", fontsize=12)
+    ax1.set_title("SN Mask Overlap: DICE", fontsize=12)
     ax1.legend(fontsize=9, loc="lower right")
     ax1.spines[["top", "right"]].set_visible(False)
     fig1.tight_layout()
@@ -3734,7 +3727,7 @@ def run_group_qc_stage(output_path, manual_dir, selected_subjects, test_mode=Fal
         ax2.set_xticks(x_pos)
         ax2.set_xticklabels(sorted_subs, rotation=45, ha="right", fontsize=7)
         ax2.set_ylabel("HD95 (mm)", fontsize=11)
-        ax2.set_title("SN Mask Surface Distance — HD95", fontsize=12)
+        ax2.set_title("SN Mask Surface Distance: HD95", fontsize=12)
 
         handles, labels = ax2.get_legend_handles_labels()
         unique = dict(zip(labels, handles))
@@ -3866,8 +3859,8 @@ def run_group_qc_stage(output_path, manual_dir, selected_subjects, test_mode=Fal
                  label='Boundary CR = Core CR')
         ax6.set_xlim(lim_min, lim_max)
         ax6.set_ylim(lim_min, lim_max)
-        ax6.set_xlabel('Median CR — mask interior (>1mm from manual edge)')
-        ax6.set_ylabel('Median CR — manual boundary band (±1mm)')
+        ax6.set_xlabel('Median CR, mask interior (>1mm from manual edge)')
+        ax6.set_ylabel('Median CR, manual boundary band (±1mm)')
         ax6.set_title('If the boundary were an NM-intensity feature,\npoints would fall well below the diagonal')
         ax6.legend(fontsize=9, loc='lower right')
         ax6.spines[['top', 'right']].set_visible(False)

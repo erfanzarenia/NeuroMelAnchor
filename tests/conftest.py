@@ -5,7 +5,7 @@ The pipeline is a single script that parses its arguments at import time, so it
 cannot simply be imported for testing. Instead these helpers lift individual
 functions out of it with `ast` and execute just those definitions. That works
 because the pipeline's worker functions are written to be self-contained (they
-import what they need inside the body) -- which is exactly what Nipype's
+import what they need inside the body), which is exactly what Nipype's
 `Function` interface requires of them, so the technique tests the real contract.
 
 Only numpy, nibabel, scipy and matplotlib are needed; Nipype, ANTs, SPM and
@@ -21,6 +21,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = REPO_ROOT / "workflow" / "scripts"
 TOOLS_DIR = REPO_ROOT / "workflow" / "tools"
+FIGURES_DIR = REPO_ROOT / "workflow" / "figures"
 PIPELINE = SCRIPTS_DIR / "neuromelanchor_pipeline.py"
 RESOURCES = REPO_ROOT / "resources" / "tpl-MNI152NLin2009cAsym"
 
@@ -62,13 +63,14 @@ def load_functions(*names, source=None):
     return {name: namespace[name] for name in names}
 
 
-def load_objects(*names, source=None):
+def load_objects(*names, source=None, namespace=None):
     """
     Like `load_functions`, but also accepts module-level assignments.
 
-    Needed for helpers that read a module constant -- `resolve_input_patterns`
-    reads the cohort pattern table -- which are not Nipype `Function` nodes and so
-    are not required to be self-contained.
+    Needed for helpers that read a module constant, such as `resolve_input_patterns`
+    reading the cohort pattern table. They are not Nipype `Function` nodes, so they
+    are not required to be self-contained. Pass ``namespace`` to supply the
+    module-level imports such a helper relies on.
     """
     source = pipeline_source() if source is None else source
     tree = ast.parse(source)
@@ -89,7 +91,7 @@ def load_objects(*names, source=None):
     if missing:
         raise KeyError(f"not top-level names in {PIPELINE.name}: {sorted(missing)}")
 
-    namespace = {}
+    namespace = dict(namespace or {})
     exec(compile(ast.Module(body=selected, type_ignores=[]), str(PIPELINE), "exec"), namespace)
     return {name: namespace[name] for name in names}
 
@@ -119,7 +121,7 @@ def free_variables(func_node):
             (bound if isinstance(node.ctx, (ast.Store, ast.Del)) else used).add(node.id)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             # Nested helpers: bind the name and its parameters. This flattens all
-            # nested scopes into one, which is deliberately permissive -- it can
+            # nested scopes into one, which is deliberately permissive: it can
             # miss a free name that happens to share a nested parameter's name,
             # but it never reports a false positive, which is what matters here.
             bound.add(node.name)
