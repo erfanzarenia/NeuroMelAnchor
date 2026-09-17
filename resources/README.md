@@ -33,13 +33,9 @@ BrainstemNavigator distribution is not freely redistributable.
 
 ## Retired tracings
 
-Two earlier sets of MNI-space SN/CP tracings are kept for provenance. Nothing in
-the current workflow reads either.
-
-| Directory | Origin |
-|---|---|
-| `traces_superseded_2026-09-10/` | Dated 2026-07-09; read by the pipeline until retired on 2026-09-10 |
-| `traces_github_2026-03-29/` | The repository's original upload, tracked on `main` until September 2026 |
+Earlier MNI-space SN and CP tracings are kept in `retired_traces/`, one directory per tracing
+date. Nothing in the current workflow reads them; see
+[retired_traces/README.md](retired_traces/README.md).
 
 The current tracing is drawn per dataset with `--stage segment` and lives in
 `<output_root>/manual_trace_v4/`.

@@ -81,8 +81,7 @@ Current as of pipeline v3.0 (2026-09-14).
    names and QC keys keep "CNR" so existing outputs stay readable.
 4. **v3.0 changes NM masks at default settings.** The mask is now morphologically
    closed (3 x 3 x 3) and intersected with the search region, so v3.0 and v2.5.0
-   results are not directly comparable, even with `--search_dilation_mm 0`. In the
-   Nexus sweep outputs, directories named `results_preclose_*` predate this step.
+   results are not directly comparable, even with `--search_dilation_mm 0`.
 5. **Masking constants are not command-line options.** `seed_cnr_floor` (0.05),
    `seed_cnr_percentile` (55), `seed_min_cluster_voxels` (15),
    `seed_components_to_keep` (2), `core_rim_erosion_mm` (0.5),
@@ -133,15 +132,11 @@ Current as of pipeline v3.0 (2026-09-14).
 19. **The anchored atlas is saved as `anat/transform_Warped.nii.gz`,** the ANTs default
     name, rather than the `CIT168_Anchored` its DataSink key suggests. Code that reads
     it back already looks for that name first.
-20. **The Nexus copy of the pipeline still has its July file name**
-    (`NeuroMel_Anchor_Pipeline_July-15th.py`) although it now holds v3.0. The
-    repository file is `neuromelanchor_pipeline.py`; future syncs must map one to the
-    other.
 
 ### Reproducibility
 
-21. **`requirements.txt` pins one working environment**, not a tested minimum.
-22. **External tool versions are not recorded.** The run log now records the command
+20. **`requirements.txt` pins one working environment**, not a tested minimum.
+21. **External tool versions are not recorded.** The run log now records the command
     line and script path, but not the ANTs, SPM or ITK-SNAP versions, so results cannot
     be fully reproduced from the repository alone.
 
@@ -151,14 +146,14 @@ Current as of pipeline v3.0 (2026-09-14).
 
 ### Two masking methods whose source is lost
 
-Output directories in Nexus contain `Native_Bilateral_NM_Mask.nii.gz` (2026-04-19) and
+Output directories written by earlier runs contain `Native_Bilateral_NM_Mask.nii.gz` (2026-04-19) and
 `Native_Refined_NM_Hysteresis.nii.gz` (2026-04-16), with matching
 `Bilateral_NM_Summary.json` and `Refined_NM_Hysteresis_Summary.json`. The JSON records
 a `"method": "bilateral_nm"` with parameters (`split_x_mm` and per-side component
 eligibility) that no surviving script produces.
 
-**No code in Nexus, on any repository branch, or anywhere in the Git history produces
-these files.** They are outputs of an April 2026 pipeline revision that was later
+**No code in the working directory, on any branch, or anywhere in the Git history
+produces these files.** They are outputs of an April 2026 pipeline revision that was later
 overwritten. Two masking approaches, a bilateral split with per-side component
 selection and a hysteresis-based refinement, were implemented, run, and lost.
 
@@ -170,7 +165,7 @@ method. Nothing in the current pipeline depends on them.
 `legacy/modular/` holds a clean, behaviour-preserving split of the March monolith into
 stages. It was never carried forward, and more than 2,000 lines of pipeline development
 have happened since, so it cannot be merged, only redone. It is kept as the starting
-point for any future modularization. See [PROVENANCE.md](PROVENANCE.md).
+point for any future modularization. See [../legacy/README.md](../legacy/README.md).
 
 ---
 
@@ -178,7 +173,7 @@ point for any future modularization. See [PROVENANCE.md](PROVENANCE.md).
 
 1. Revisit the threshold rule (items 2 and 3): a floor that can act, or a rule tied to
    each subject's contrast distribution, as the authors' note suggests.
-2. Record ANTs, SPM and ITK-SNAP versions in the run log (item 22), the cheapest real
+2. Record ANTs, SPM and ITK-SNAP versions in the run log (item 21), the cheapest real
    improvement to reproducibility.
 3. Promote the masking constants and `--search_dilation_mm` defaults to documented
    command-line settings (item 5), keeping current values as defaults.

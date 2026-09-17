@@ -38,7 +38,7 @@ EXPECTED_FIGURES = [
 EXPECTED_DOCS = [
     "INSTALL.md", "USAGE.md", "WORKFLOW.md", "DATA_SPECIFICATION.md",
     "EVALUATION.md", "MANUAL_SEGMENTATION.md", "REPOSITORY_STRUCTURE.md",
-    "STATUS.md", "PROVENANCE.md", "MIGRATION_AUDIT.md",
+    "STATUS.md",
 ]
 
 # Resources the pipeline resolves relative to --project_root. If one of these
@@ -97,7 +97,7 @@ def test_pipeline_resource_paths_resolve():
 
 
 def test_no_site_specific_absolute_paths():
-    """Scripts must not hard-code the Nexus working directory."""
+    """Scripts must not hard-code a site-specific working directory."""
     offenders = []
     for path in [*SCRIPTS_DIR.rglob("*.py"), *TOOLS_DIR.rglob("*.py"), *TOOLS_DIR.rglob("*.sh"),
                  *FIGURES_DIR.rglob("*.py")]:

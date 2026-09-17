@@ -11,10 +11,7 @@ command line; run either with `--help`.
 
 Every figure is written as PNG and SVG.
 
-Both scripts were written for the Brainhack Western 2026 poster. They came from
-the Nexus working directory on 2026-09-14 as `BrainHack_Poster_Workflow_Methods.py`
-and `Posters_Trajectory_Plots.py`. Site-specific paths and settings became
-command-line options; the plotting itself is unchanged.
+Both scripts were written for the Brainhack Western 2026 poster.
 
 The poster figures were made with:
 

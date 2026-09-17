@@ -16,8 +16,7 @@ NeuroMelAnchor/
 │   └── workspace/    ITK-SNAP workspace template
 ├── resources/
 │   ├── tpl-MNI152NLin2009cAsym/
-│   ├── traces_superseded_2026-09-10/
-│   └── traces_github_2026-03-29/
+│   └── retired_traces/
 ├── legacy/
 └── tests/
 ```
@@ -78,9 +77,8 @@ Atlas priors and MNI references, resolved from `--project_root`. The full table,
 including the one file you must generate after cloning, is in
 [../resources/README.md](../resources/README.md).
 
-Two retired sets of MNI-space manual tracings are kept for provenance and read by
-nothing: `traces_superseded_2026-09-10/` (dated 2026-07-09, used until the V4 template
-replaced them) and `traces_github_2026-03-29/` (the repository's original upload).
+Earlier MNI-space manual tracings are kept in `retired_traces/`, one directory per tracing
+date. Nothing in the current workflow reads them.
 
 ## `config/`
 
@@ -91,7 +89,7 @@ replaced them) and `traces_github_2026-03-29/` (the repository's original upload
 
 Superseded implementations kept for provenance and not maintained: the original March
 2026 pipeline and the `modular_branch` refactor. See
-[../legacy/README.md](../legacy/README.md) and [PROVENANCE.md](PROVENANCE.md).
+[../legacy/README.md](../legacy/README.md).
 
 ## `tests/`
 
@@ -110,8 +108,6 @@ Smoke checks and unit tests that need no external software and no imaging data. 
 | `EVALUATION.md` | QC metrics, flags and poster figures |
 | `REPOSITORY_STRUCTURE.md` | This file |
 | `STATUS.md` | Implemented and unfinished work, and known limitations |
-| `PROVENANCE.md` | Project history, contributors and version decisions |
-| `MIGRATION_AUDIT.md` | The audit behind the September 2026 reorganization |
 
 ---
 

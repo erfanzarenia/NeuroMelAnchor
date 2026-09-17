@@ -31,8 +31,9 @@ available references: manual tracings when provided, atlas-derived masks otherwi
 
 NeuroMelAnchor was started at Brainhack Western 2026, where it won the Excellence in
 Innovation award. It has since been developed substantially, mostly by Sam Marshall
-(@smarsh127), with input from Dr. Bruce Morton. The full history is in
-[docs/PROVENANCE.md](docs/PROVENANCE.md).
+(@smarsh127), with input from Dr. Bruce Morton. Dylan Dinesh wrote the first documentation
+set and a modular refactor of the early pipeline, and rizviwazeen pinned the original Python
+environment. The repository is maintained by Erfan Zarenia.
 
 ---
 
@@ -163,8 +164,6 @@ See [docs/REPOSITORY_STRUCTURE.md](docs/REPOSITORY_STRUCTURE.md).
 | [EVALUATION.md](docs/EVALUATION.md) | QC metrics, flags, poster figures, and how to read them |
 | [REPOSITORY_STRUCTURE.md](docs/REPOSITORY_STRUCTURE.md) | Where everything lives |
 | [STATUS.md](docs/STATUS.md) | **What is implemented, what is unfinished, and known limitations** |
-| [PROVENANCE.md](docs/PROVENANCE.md) | Project history, contributors, and why each version was chosen |
-| [MIGRATION_AUDIT.md](docs/MIGRATION_AUDIT.md) | The audit behind the September 2026 reorganization |
 | [CHANGELOG.md](CHANGELOG.md) | What changed, and when |
 
 New contributors should read `STATUS.md` before `USAGE.md`: several behaviours are
@@ -181,15 +180,6 @@ cd tests && python -m pytest
 These need only the Python packages in `requirements.txt` plus pytest: no ANTs, SPM,
 ITK-SNAP, GPU or imaging data. They are smoke checks and unit tests, not a validation
 of scientific output; see [tests/README.md](tests/README.md).
-
----
-
-## Credits
-
-NeuroMelAnchor began as a Brainhack Western 2026 project and won the event's
-Excellence in Innovation award. Most of its development since then is the work of Sam
-Marshall (@smarsh127), with input from Dr. Bruce Morton. Other contributors are listed
-in [docs/PROVENANCE.md](docs/PROVENANCE.md).
 
 ---
 

@@ -192,7 +192,6 @@ analyses, but deleting it forces a full recomputation.
 
 ## Files from older revisions
 
-Output directories in the Nexus working directory also contain files the current code does not
+Output directories written by earlier revisions can contain files the current code does not
 write, such as `Disagreement_*` maps, `Motion_Params_Plot.png`, `Run_Difference_QC.png`,
-`Native_Bilateral_NM_Mask.nii.gz` and `Native_Refined_NM_Hysteresis.nii.gz`. They come from
-earlier pipeline revisions; see [STATUS.md](STATUS.md).
+`Native_Bilateral_NM_Mask.nii.gz` and `Native_Refined_NM_Hysteresis.nii.gz`. See [STATUS.md](STATUS.md).

@@ -14,7 +14,3 @@ extra maps. Each takes its paths on the command line; run any of them with
 | `mp2rage_uniden.py` | Third-party MP2RAGE UNI denoising (see file header for attribution). Kept verbatim. |
 | `mp2rage_uniden_batch.sh` | Runs the above across a BIDS directory. |
 | `fit_r2star.py` | Fits R2*/T2* maps from multi-echo GRE. Independent of the pipeline; needs FSL and MRtrix3. |
-
-Consolidated here from `Extra_Functions/`, `Scripts/` and `workflow/scripts/` in
-the Nexus working directory. `bids_rename.py` merges the two near-identical
-`NM_BioGen_ReName.py` copies that existed there.
