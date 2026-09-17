@@ -27,7 +27,7 @@ NeuroMelAnchor/
 
 | File | Status | Purpose |
 |---|---|---|
-| `neuromelanchor_pipeline.py` | **canonical** | The whole pipeline, about 3,900 lines: all four stages, selected with `--stage` |
+| `neuromelanchor_pipeline.py` | **canonical** | The whole pipeline, about 4,000 lines: all four stages, selected with `--stage` |
 | `template_builder.py` | **canonical** | FireANTs iterative template construction in MNI space. Called by `--stage segment`; can also be run directly |
 | `template_builder_native.py` | experimental | The same approach on a chosen subject's native grid. Not called by the pipeline |
 | `native_template_prep.py` | experimental | Prepares per-subject inputs for the native builder |

@@ -33,8 +33,7 @@ Current as of pipeline v3.0 (2026-09-14).
 - **`--search_dilation_mm`** (new in v3.0). Evaluated on one cohort: BioGen 7T, echo
   1, 25 subjects, from 0 to 3 mm in 0.5 mm steps. The poster used 0.5 mm. The default
   stays 0, which keeps the propagated tracing as drawn.
-- **`--cohort snit`.** The SNIT filename patterns were carried over unchanged from
-  commented-out code but have not been run since they became configurable.
+- **`--dataset snit`.** The SNIT file naming is implemented but has not been run recently.
 - **`--nm_input echo`.** Works, and the poster sweep used echo 1; `combo` has the
   higher SNR.
 - **`--nm_image_n`.** Implemented and unit-tested, but not used in a full analysis.
@@ -111,12 +110,14 @@ Current as of pipeline v3.0 (2026-09-14).
     99th-percentile cap, the component filter and the closing. Both voxel counts are in
     `Poster_NM_Blind_Control.csv`; part of any DICE difference may reflect mask size.
 12. **Poster statistics are descriptive.** `Poster_Accuracy` uses paired Wilcoxon
-    signed-rank tests with a Holm correction across its three atlas comparisons; the
-    NM-blind control figure reports one uncorrected test per metric.
+    signed-rank tests with a Holm correction across its three atlas comparisons, and
+    `Poster_Statistics.csv` repeats every comparison with sign tests, bootstrap
+    intervals and Holm adjustment both within and across the tests. None of this is a
+    validation against an independent reference.
 
 ### Technical
 
-13. **The pipeline is a single script of about 3,900 lines.** It parses arguments at
+13. **The pipeline is a single script of about 4,000 lines.** It parses arguments at
     import time, so it cannot be imported or unit-tested in the usual way. The tests
     work around this by lifting functions out with `ast`.
 14. **`--output_root` must sit inside `--project_root`** when the V4 template is

@@ -6,7 +6,7 @@
 #
 # See docs/STATUS.md for the state of configuration-file support.
 
-cohort: biogen                 # --cohort {biogen, snit}
+dataset: biogen                # --dataset {biogen, snit}
 
 paths:
   project_root: /path/to/NeuroMelAnchor           # --project_root, a checkout of this repository
@@ -20,11 +20,6 @@ input:
   nm_echo: 3                   # --nm_echo, used only when nm_input is echo
   nm_image_strategy: mean      # --nm_image_strategy {mean, first}
   nm_image_n: null             # --nm_image_n, average only the first N acquisitions
-
-  # Override the filename globs for a cohort not in COHORT_INPUT_PATTERNS.
-  # {subject_id} is filled per subject; {echo} is filled from nm_echo.
-  nm_pattern: null             # --nm_pattern
-  t1_pattern: null             # --t1_pattern
 
 execution:
   n_procs: 10                  # --n_procs
@@ -70,7 +65,7 @@ masking_constants_readonly:
 #     --design_dir   /path/to/bids_root \
 #     --output_root  /path/to/NeuroMelAnchor/outputs \
 #     --work_dir     /path/to/work \
-#     --cohort biogen --nm_input combo --nm_image_strategy mean \
+#     --dataset biogen --nm_input combo --nm_image_strategy mean \
 #     --stage all --n_procs 10 --smooth 0 --hires \
 #     --drawing_template v4 --search_dilation_mm 0 \
 #     --prob_atlas_threshold 0.25 --nms_atlas_threshold 0.25

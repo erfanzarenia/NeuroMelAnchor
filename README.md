@@ -101,8 +101,8 @@ ITK-SNAP, and a container for FireANTs).
 
 ## Inputs
 
-BIDS-like, one directory per subject. BioGen naming is shown; `--cohort snit` selects
-the other convention, and `--nm_pattern` and `--t1_pattern` override both.
+BIDS-like, one directory per subject. BioGen naming is shown; `--dataset snit` selects the
+other convention.
 
 ```
 sub-01/

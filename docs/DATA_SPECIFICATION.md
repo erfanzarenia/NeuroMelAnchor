@@ -27,7 +27,7 @@ Neuromelanin-sensitive GRE, 3D NIfTI, in native acquisition space. Subjects can 
 more acquisitions: with `--nm_image_strategy mean` (the default) they are realigned and
 averaged, and with `first` only the first is used.
 
-| `--cohort` | `--nm_input combo` | `--nm_input echo` |
+| `--dataset` | `--nm_input combo` | `--nm_input echo` |
 |---|---|---|
 | `biogen` | `{sub}_acq-CombEchoNM*_GRE.nii.gz` | `{sub}_run-1_echo-{N}_part-mag_MEGRE.nii.gz` |
 | `snit` | `{sub}_acq-CombEchoNM*_GRE.nii.gz` | `{sub}_acq-NM_rec-DIS2D_run-*_echo-{N}_part-mag_GRE.nii.gz` |
@@ -37,15 +37,13 @@ with `--nm_echo`.
 
 ### T1-weighted image
 
-| `--cohort` | Pattern |
+| `--dataset` | Pattern |
 |---|---|
 | `biogen` | `{sub}_acq-T1w.nii.gz` |
 | `snit` | `{sub}_acq-MP2RAGEpostproc_run-01_T1w.nii.gz` |
 
 Used for brain extraction, as the NM registration target, and as the bridge to MNI space. For
 7T MP2RAGE data, denoise the UNI image first with `workflow/tools/mp2rage_uniden_batch.sh`.
-
-`--nm_pattern` and `--t1_pattern` override either pattern.
 
 ### Manual masks (optional)
 
@@ -182,6 +180,7 @@ not copied to the output root.
 | `Poster_Strip_<sub>` | One slice per method for the median subject |
 | `Poster_CNR_Histogram_<sub>` and `Poster_CNR_Histogram_Group` | CP and search-region intensities, for the median subject and pooled |
 | `Poster_NM_Blind_Control.csv` and figure | The NM mask against the propagated tracing and an NM-blind control |
+| `Poster_Statistics.csv` | Every paired comparison behind the poster, as one table |
 
 Poster files are written only when manual masks are available, each figure as PNG and SVG. With
 `--test`, every group and poster file gains a `_TEST` suffix so a test run cannot overwrite a

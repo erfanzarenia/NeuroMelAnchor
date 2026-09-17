@@ -119,6 +119,7 @@ the Brainhack Western 2026 poster.
 | `Poster_CNR_Histogram_<sub>` | The median subject's CP and search-region intensities, with the CP reference and an approximate threshold line |
 | `Poster_CNR_Histogram_Group` | Every subject's intensities divided by their CP reference, shown as a mean with an interquartile band |
 | `Poster_NM_Blind_Control` (`.csv` and figure) | See below |
+| `Poster_Statistics.csv` | Every paired comparison behind the poster in one table: medians for the NM mask and the other method, the median difference with a bootstrap 95% interval, how many subjects each wins, and Wilcoxon, sign-test and Holm-adjusted p values. Differences are signed so a positive value always means the NM mask is better |
 
 The threshold line in `Poster_CNR_Histogram_<sub>` is illustrative: the pipeline thresholds the
 smoothed contrast map with an eroded CP mask, which a line on raw intensities cannot show
@@ -136,9 +137,8 @@ a manual mask it scores three masks against the expert mask:
 3. **NM mask:** the pipeline's contrast-based mask.
 
 `Poster_NM_Blind_Control.csv` holds, per subject, the voxel counts of the search region and both
-masks, and the DICE and HD95 of all three. The figure links each subject across the three and
-reports how many subjects the NM mask beats the NM-blind mask in, with a paired Wilcoxon
-signed-rank test per metric.
+masks, and the DICE and HD95 of all three. The figure links each subject across the three; the counts and p values for the same
+comparison are in `Poster_Statistics.csv`.
 
 The control is not volume-matched: the NM mask also passes through the 99th-percentile cap, the
 component filter and the closing, so it rarely keeps exactly 45% of the region. Compare the

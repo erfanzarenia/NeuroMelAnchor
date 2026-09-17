@@ -111,16 +111,14 @@ changing a plot. See [EVALUATION.md](EVALUATION.md).
 
 | Option | Default | Purpose |
 |---|---|---|
-| `--cohort` | `biogen` | Filename convention: `biogen` or `snit` |
+| `--dataset` | `biogen` | File naming convention for the NM echo and T1 images: `biogen` or `snit` |
 | `--nm_input` | `combo` | `combo` is the vendor-combined multi-echo GRE (higher SNR); `echo` is a single MEGRE echo |
 | `--nm_echo` | `3` | Echo number used when `--nm_input echo` |
-| `--nm_pattern` | none | Override the NM glob. `{subject_id}` and `{echo}` are filled in |
-| `--t1_pattern` | none | Override the T1 glob. `{subject_id}` is filled in |
 | `--nm_image_strategy` | `mean` | `mean` averages all realigned acquisitions; `first` uses only the first |
 | `--nm_image_n` | all | In `mean` mode, average only the first N acquisitions |
 
-To add a cohort, add an entry to `COHORT_INPUT_PATTERNS` in the pipeline rather than
-editing the workflow.
+Another dataset means another branch where `--dataset` is handled at the start of the
+Stage 1 workflow.
 
 ### Templates and resolution
 

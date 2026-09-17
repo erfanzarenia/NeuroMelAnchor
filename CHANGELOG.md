@@ -18,9 +18,9 @@ The previous state of `main` dated from 2026-05-08.
 - core-rim masking, and comparisons against the CIT168 probabilistic and NMS probabilistic
   atlases
 - a `group_qc` stage with per-subject dashboards, an output manifest, group plots, poster
-  figures and an NM-blind control
-- `--nm_input combo|echo`, `--drawing_template v4|naive`, and `--cohort` with `--nm_pattern`
-  and `--t1_pattern` for datasets whose file names differ
+  figures, an NM-blind control and a statistics table
+- `--nm_input combo|echo`, `--drawing_template v4|naive`, and `--dataset` for datasets whose
+  file names differ
 - the run log records the settings, the script path and the full command line
 
 **Results from v3.0 are not directly comparable with earlier ones**, because the closing step

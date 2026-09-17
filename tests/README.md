@@ -17,7 +17,7 @@ data is read. Every numeric test builds its own small synthetic volume.
 |---|---|
 | `test_repo_layout.py` | Expected scripts, tools, figure scripts and documents exist; every atlas file the pipeline hard-codes is present; no site-specific absolute paths; no compiled files are tracked; there is a single requirements file |
 | `test_scripts_parse.py` | Every Python file parses and every shell script passes `bash -n`; the pipeline's options and stage names are intact; the bodies of Nipype `Function` nodes are self-contained; every standalone script's `--help` works and none runs without arguments; the figure scripts read only file names and CSV columns that the pipeline still writes |
-| `test_mask_helpers.py` | `select_nm_image_files`, `threshold_probability_mask`, `create_core_rim_nm_mask`, `build_sn_roi_mask`, `compute_motion_params`, `resolve_input_patterns`, `dilate_search_region`, and the closing step in `extract_tractography_seed` |
+| `test_mask_helpers.py` | `select_nm_image_files`, `threshold_probability_mask`, `create_core_rim_nm_mask`, `build_sn_roi_mask`, `compute_motion_params`, `dilate_search_region`, and the closing step in `extract_tractography_seed` |
 | `test_group_qc_helpers.py` | The NM-blind control in `nm_blind_control_rows`, and `build_poster_accuracy_figure` with tied metrics |
 | `test_figures.py` | Run discovery, metric reading and panel cropping in the figure scripts |
 
