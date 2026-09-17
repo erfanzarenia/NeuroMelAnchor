@@ -7,9 +7,9 @@ command line; run either with `--help`.
 | Script | Reads | Writes |
 |---|---|---|
 | `poster_workflow_panels.py` | One output root: the V4 drawing template and tracing, plus one subject's NM image, search region and NM-defined mask | `Workflow_1a` to `Workflow_5` panels illustrating the method |
-| `poster_dilation_sweep.py` | Several output roots, one per `--search_dilation_mm` value, named `results_dil-<mm>` | `Poster_Sweep_Dice`, `Poster_Sweep_Precision` and `Poster_Sweep_HD95`: metrics against the dilation |
+| `poster_dilation_sweep.py` | Several output roots, one per `--search_dilation_mm` value, named `results_dil-<mm>` | `Poster_Sweep_1x3.png`: DICE, HD95, and precision with recall against the dilation |
 
-Every figure is written as PNG and SVG.
+The panels are written as PNG and SVG, the sweep figure as a PNG.
 
 Both scripts were written for the Brainhack Western 2026 poster.
 

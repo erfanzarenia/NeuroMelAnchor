@@ -4,8 +4,8 @@ Plot how the NM-defined mask changes as the propagated search region is grown.
 
 Reads one Stage 2 output root per --search_dilation_mm value, in directories named
 like results_dil-0.5, and plots DICE, precision and recall, and HD95 of the
-NM-defined mask against the expert (manual) masks as a function of the dilation.
-By default the DICE panel also shows how much of each expert mask the grown search
+NM-defined mask against the expert (manual) masks as a function of the dilation, as one
+three-panel figure. By default the DICE panel also shows how much of each expert mask the grown search
 region covers.
 
     python workflow/figures/poster_dilation_sweep.py \
@@ -15,7 +15,7 @@ region covers.
 Each run directory needs a Group_QC_Pairwise_Summary.csv, written by --stage 2 or
 --stage group_qc. The coverage line also needs
 sub-*/anat/Native_SN_Search_Region.nii.gz, which the pipeline writes from v3.0.
-Figures are saved as PNG and SVG.
+The figure is saved as a PNG.
 
 A post-hoc figure script written for the Brainhack Western 2026 poster; it is not
 part of the pipeline.
@@ -98,17 +98,14 @@ def metric_matrix(runs, subjects, column, mask_pair):
 
 
 def save_poster_figure(fig, output_file, dpi=400):
-    """Save a poster figure as PNG and as SVG, which stays sharp at any print size."""
-    output_file = Path(output_file)
-    fig.savefig(str(output_file.with_suffix('.png')), dpi=dpi, bbox_inches='tight')
-    fig.savefig(str(output_file.with_suffix('.svg')), bbox_inches='tight')
+    """Save a poster figure as a PNG at the given resolution."""
+    fig.savefig(str(output_file), dpi=dpi, bbox_inches='tight')
 
 
-def plot_sweep(dilations, series, subjects, y_label, title, output_file,
+def plot_sweep(axis, dilations, series, subjects, y_label, title,
                y_limits=None, second_line=None, second_label=None, second_limits=None, chosen_mm=None):
-    """One panel: faint per-subject lines, a bold median, and an optional second line."""
+    """Draw one panel onto axis: faint per-subject lines, a bold median, and an optional second line."""
     values, colour, label = series
-    fig, axis = plt.subplots(figsize=(8.6, 5.6))
 
     for column in range(values.shape[1]):
         axis.plot(dilations, values[:, column], color=colour, alpha=0.16, lw=1.0)
@@ -152,10 +149,6 @@ def plot_sweep(dilations, series, subjects, y_label, title, output_file,
 
     axis.legend(handles=handles, fontsize=12.5, loc="best", framealpha=0.95)
     axis.set_title(f"{title}\nn = {len(subjects)} subjects", fontsize=16)
-    fig.tight_layout()
-    save_poster_figure(fig, output_file)
-    plt.close(fig)
-    print(f"saved: {output_file}")
 
 
 # =================================================================
@@ -212,23 +205,32 @@ def main():
         coverage = np.array([[table.get(subject, np.nan) for subject in subjects]
                              for table in coverage_tables]) * 100
 
-    plot_sweep(dilations, (dice, DICE_COLOUR, "DICE"), subjects,
-               "DICE vs expert mask", "How far to grow the search region",
-               panel_dir / "Poster_Sweep_Dice.png", y_limits=(0.1, 0.9),
+    # One 1 x 3 poster figure: DICE, HD95, precision and recall
+    fig, axes = plt.subplots(1, 3, figsize=(27, 6.6))
+
+    plot_sweep(axes[0], dilations, (dice, DICE_COLOUR, "DICE"), subjects,
+               "DICE vs expert mask", "Effect of Dilation on DICE",
+               y_limits=(0.1, 0.9),
                second_line=(coverage, COVERAGE_COLOUR) if coverage is not None else None,
                second_label="Expert mask covered by the region (%)",
                second_limits=(60, 104) if coverage is not None else None,
                chosen_mm=args.chosen_mm)
 
-    plot_sweep(dilations, (precision, PRECISION_COLOUR, "% of our mask inside the expert mask"), subjects,
-               "Share of Voxels", "Growing the region finds more SN but includes more non-SN",
-               panel_dir / "Poster_Sweep_Precision.png", y_limits=(0.2, 1.02),
-               second_line=(recall, RECALL_COLOUR), second_label="% of the expert mask our mask covers",
+    plot_sweep(axes[1], dilations, (hd95, HD95_COLOUR, "HD95"), subjects,
+               "HD95 vs expert Mask (mm)", "Effect of Dilation on HD95",
                chosen_mm=args.chosen_mm)
 
-    plot_sweep(dilations, (hd95, HD95_COLOUR, "HD95"), subjects,
-               "HD95 vs expert Mask (mm)", "Boundary error",
-               panel_dir / "Poster_Sweep_HD95.png", chosen_mm=args.chosen_mm)
+    plot_sweep(axes[2], dilations, (precision, PRECISION_COLOUR, "Precision: mask voxels that are SN"), subjects,
+               "Proportion", "Bigger region: finds more SN, but adds non-SN",
+               y_limits=(0.2, 1.02),
+               second_line=(recall, RECALL_COLOUR), second_label="SN voxels found",
+               chosen_mm=args.chosen_mm)
+
+    fig.tight_layout(w_pad=4.0)
+    sweep_file = panel_dir / "Poster_Sweep_1x3.png"
+    save_poster_figure(fig, sweep_file)
+    plt.close(fig)
+    print(f"saved: {sweep_file}")
 
     print(f"\n{'dilation':>9s}{'dice':>8s}{'precision':>11s}{'recall':>9s}{'hd95':>8s}")
     for index, dilation in enumerate(dilations):
