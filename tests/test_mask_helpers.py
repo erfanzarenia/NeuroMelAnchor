@@ -13,7 +13,7 @@ import numpy as np
 import nibabel as nib
 import pytest
 
-from conftest import load_functions, load_objects
+from conftest import load_functions
 
 
 @pytest.fixture(autouse=True)
@@ -242,41 +242,6 @@ def test_compute_motion_params_handles_a_single_volume(tmp_path):
     stats_file = compute_motion_params(str(parameter_file))
     stats = json.loads(Path(stats_file).read_text())
     assert stats["translation_range_mm"]["max"] == 0.0
-
-
-# ------------------------------------------------------------- resolve_input_patterns
-
-@pytest.fixture(scope="module")
-def resolve_input_patterns():
-    return load_objects("COHORT_INPUT_PATTERNS",
-                        "resolve_input_patterns")["resolve_input_patterns"]
-
-
-def test_cohort_patterns_keep_the_subject_placeholder(resolve_input_patterns):
-    """SelectFiles fills {subject_id} itself, so it must survive resolution."""
-    nm, t1 = resolve_input_patterns("biogen", "combo", 3)
-    assert "{subject_id}" in nm and "{subject_id}" in t1
-    assert nm.endswith("_acq-CombEchoNM*_GRE.nii.gz")
-
-
-def test_echo_number_is_substituted(resolve_input_patterns):
-    nm, _ = resolve_input_patterns("biogen", "echo", 3)
-    assert "echo-3" in nm and "{echo}" not in nm
-
-
-def test_snit_cohort_uses_its_own_naming(resolve_input_patterns):
-    nm, t1 = resolve_input_patterns("snit", "echo", 2)
-    assert "rec-DIS2D" in nm and "echo-2" in nm
-    assert "MP2RAGEpostproc" in t1
-
-
-def test_overrides_win_over_the_cohort_defaults(resolve_input_patterns):
-    nm, t1 = resolve_input_patterns(
-        "biogen", "combo", 3,
-        nm_override="{subject_id}/anat/custom_echo-{echo}.nii.gz",
-        t1_override="{subject_id}/anat/custom_T1w.nii.gz")
-    assert nm == "{subject_id}/anat/custom_echo-3.nii.gz"
-    assert t1 == "{subject_id}/anat/custom_T1w.nii.gz"
 
 
 # ---------------------------------------------------------------- dilate_search_region

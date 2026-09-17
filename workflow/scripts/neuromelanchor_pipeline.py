@@ -155,12 +155,12 @@ parser.add_argument('--skip_template_builder', action='store_true', help='Skip F
 parser.add_argument('--drawing_template', choices=['v4', 'naive'], default='v4', help="Template the SN/CP masks are drawn on in --stage segment: v4 = FireANTs V4 midbrain template (default), naive = plain group mean")
 parser.add_argument('--rebuild_template', action='store_true', help="Rebuild and re-align the V4 drawing template")
 parser.add_argument('--search_dilation_mm', default=0.0, type=float, help="Grow the propagated SN search region by this many mm before NM refinement (default: 0 = current behaviour)")
+parser.add_argument("--dataset", choices=["biogen", "snit"], default="biogen",help="Input file naming: biogen = sub-X_run-1_echo-N_part-mag_MEGRE + sub-X_acq-T1w; "
+                         "snit = sub-X_acq-NM_rec-DIS2D_run-*_echo-N_part-mag_GRE + sub-X_acq-MP2RAGEpostproc_run-01_T1w (default: biogen)")
+
 
 
 parser.add_argument("--nm_input", choices=["combo", "echo"], default="combo", help="NM source: 'combo' = vendor-combined multi-echo GRE (default, higher SNR)'echo' = single MEGRE echo, selected by --nm_echo")
-parser.add_argument("--cohort", choices=["biogen", "snit"], default="biogen", help="Selects the BIDS filename conventions used to find NM and T1 images (default: biogen)")
-parser.add_argument("--nm_pattern", default=None, help="Override the NM SelectFiles glob. Use {subject_id} for the subject and {echo} for --nm_echo")
-parser.add_argument("--t1_pattern", default=None, help="Override the T1 SelectFiles glob. Use {subject_id} for the subject")
 parser.add_argument("--nm_echo", default=3, type=int, help="Echo number to use when --nm_input echo (default: 2)")
 args = parser.parse_args()
 if args.skip_template_builder:
@@ -189,45 +189,6 @@ core_rim_rim_cnr_threshold = 0.10
 core_rim_min_cluster_voxels = 25
 # Keeps only the largest 2 connected components
 core_rim_components_to_keep = 2
-
-# =================================================================
-# Cohort Input Patterns
-# =================================================================
-# SelectFiles globs, relative to --design_dir. These were previously switched by
-# commenting blocks in and out of the Stage 1 workflow; they are data now so a new
-# cohort is a table entry (or a --nm_pattern/--t1_pattern override) rather than an edit.
-
-COHORT_INPUT_PATTERNS = {
-    "biogen": {
-        "combo": "{subject_id}/anat/{subject_id}_acq-CombEchoNM*_GRE.nii.gz",
-        "echo":  "{subject_id}/anat/{subject_id}_run-1_echo-{echo}_part-mag_MEGRE.nii.gz",
-        "t1":    "{subject_id}/anat/{subject_id}_acq-T1w.nii.gz",
-    },
-    "snit": {
-        "combo": "{subject_id}/anat/{subject_id}_acq-CombEchoNM*_GRE.nii.gz",
-        "echo":  "{subject_id}/anat/{subject_id}_acq-NM_rec-DIS2D_run-*_echo-{echo}_part-mag_GRE.nii.gz",
-        "t1":    "{subject_id}/anat/{subject_id}_acq-MP2RAGEpostproc_run-01_T1w.nii.gz",
-    },
-}
-
-
-def resolve_input_patterns(cohort, nm_input, nm_echo, nm_override=None, t1_override=None):
-    """
-    Return the (NM, T1) SelectFiles globs for a cohort.
-
-    ``{subject_id}`` is deliberately left in place for SelectFiles to fill per
-    subject; ``{echo}`` is substituted here because the echo number is fixed for
-    the whole run. An explicit override always wins over the cohort default.
-    """
-    defaults = COHORT_INPUT_PATTERNS[cohort]
-    nm_pattern = nm_override if nm_override else defaults[nm_input]
-    t1_pattern = t1_override if t1_override else defaults["t1"]
-    return nm_pattern.replace("{echo}", str(nm_echo)), t1_pattern
-
-
-nm_pattern, t1_pattern = resolve_input_patterns(
-    args.cohort, args.nm_input, args.nm_echo, args.nm_pattern, args.t1_pattern
-)
 
 # =================================================================
 # Paths
@@ -279,9 +240,6 @@ log.info(f"skip_core_rim_nm    : {args.skip_core_rim_nm}")
 log.info(f"test mode           : {args.test}")
 log.info(f"nm_image_stategy    : {args.nm_image_strategy}")
 log.info(f"nm_image_n          : {args.nm_image_n}")
-log.info(f"cohort              : {args.cohort}")
-log.info(f"nm_pattern          : {nm_pattern}")
-log.info(f"t1_pattern          : {t1_pattern}")
 log.info(f"nm_input            : {args.nm_input}")
 log.info(f"nm_echo             : {args.nm_echo if args.nm_input == 'echo' else 'n/a'}")
 log.info(f"hires               : {args.hires}")
@@ -290,6 +248,7 @@ log.info(f"rebuild_template    : {args.rebuild_template}")
 log.info(f"search_dilation_mm  : {args.search_dilation_mm}")
 log.info(f"script              : {Path(__file__).resolve()}")
 log.info(f"command             : {' '.join(sys.argv)}")
+log.info(f"dataset             : {args.dataset}")
 log.info("=" * 60)
 
 # =================================================================
@@ -351,6 +310,7 @@ def build_v4_template(project_root, output_base, v4_template):
         "--shape-avg",
         "--shape-avg-step", "0.25",
         "--laplacian", "0",
+        "--save-iterations",
     ]
 
     log.info(f"Building the V4 drawing template: {' '.join(builder_cmd)}")
@@ -1573,8 +1533,19 @@ if run_phase1:
     inputnode.iterables = [('subject_id', subjects)]
 
 
-    # Input globs come from --cohort (or --nm_pattern/--t1_pattern); see resolve_input_patterns.
-    NM_Data = {'runs': nm_pattern}
+    # Input file naming differs between cohorts; --dataset chooses the patterns.
+    if args.dataset == "snit":
+        echo_pattern = f'{{subject_id}}/anat/{{subject_id}}_acq-NM_rec-DIS2D_run-*_echo-{args.nm_echo}_part-mag_GRE.nii.gz'
+        T1_Data = {'T1': '{subject_id}/anat/{subject_id}_acq-MP2RAGEpostproc_run-01_T1w.nii.gz'}
+    else:
+        echo_pattern = f'{{subject_id}}/anat/{{subject_id}}_run-1_echo-{args.nm_echo}_part-mag_MEGRE.nii.gz'
+        T1_Data = {'T1': '{subject_id}/anat/{subject_id}_acq-T1w.nii.gz'}
+
+    if args.nm_input == "combo":
+        NM_Data = {'runs': '{subject_id}/anat/{subject_id}_acq-CombEchoNM*_GRE.nii.gz'}
+    else:
+        NM_Data = {'runs': echo_pattern}
+
     SelectNM = Node(SelectFiles(NM_Data, base_directory=str(design_dir)), name='SelectNM')
 
     select_nm_image = Node(Function(input_names=["in_files", "strategy", "n"],
@@ -1584,7 +1555,7 @@ if run_phase1:
     select_nm_image.inputs.strategy = args.nm_image_strategy
     select_nm_image.inputs.n = args.nm_image_n
 
-    T1_Data = {'T1': t1_pattern}
+
     SelectT1 = Node(SelectFiles(T1_Data, base_directory=str(design_dir)), name='SelectT1')
 
     # =================================================================
@@ -3341,8 +3312,8 @@ def nm_blind_control_rows(subject_ids, output_path, manual_dir):
 
 
 def build_nm_blind_control_figure(rows, output_file):
-    """Per subject: registration only -> same share of the region without NM -> NM contrast seed."""
-    columns = [("drawing", "Propagated drawing\n(registration only)", "#4C72B0"),
+    """Per subject: registration only to same share of the region without NM -> NM contrast seed."""
+    columns = [("drawing", "Registration only", "#4C72B0"),
                ("nm_blind", "45% of search region,\nno NM contrast", "#8C8C8C"),
                ("nm_seed", "NM contrast\nseed", "#FF3B30")]
     fig, axes = plt.subplots(1, 2, figsize=(11, 5))
@@ -3363,8 +3334,8 @@ def build_nm_blind_control_figure(rows, output_file):
         blind, seed = values[1], values[2]
         improved = int((seed > blind).sum()) if better == "higher" else int((seed < blind).sum())
         p_value = wilcoxon(seed, blind).pvalue if np.any(seed != blind) else float("nan")
-        axis.set_title(f"{label} ({better} is better)\nNM seed vs no-NM control: better in "
-                       f"{improved}/{len(seed)}, p = {p_value:.2g}", fontsize=10)
+        #axis.set_title(f"{label} ({better} is better)\nNM seed vs no-NM control: better in "
+                       #f"{improved}/{len(seed)}, p = {p_value:.2g}", fontsize=10)
         axis.set_xticks([0, 1, 2])
         axis.set_xticklabels([column_label for _, column_label, _ in columns])
         axis.set_xlim(-0.4, 2.5)
@@ -3376,6 +3347,101 @@ def build_nm_blind_control_figure(rows, output_file):
     plt.close(fig)
     return output_file
 
+def build_poster_statistics_table(subject_records, control_rows, output_file):
+    """
+    Save every paired comparison behind the poster as one CSV.
+
+    One row per comparison: the NM seed against each atlas, the propagated drawing
+    (registration only) and the NM-blind control, for DICE and HD95. Differences are
+    signed so that a positive value always means the NM seed is better.
+    """
+    from scipy.stats import wilcoxon, binomtest
+
+    def holm(p_values):
+        order = np.argsort(p_values)
+        adjusted = np.ones(len(p_values))
+        running_max = 0.0
+        for rank, index in enumerate(order):
+            running_max = max(running_max, min(1.0, p_values[index] * (len(p_values) - rank)))
+            adjusted[index] = running_max
+        return adjusted
+
+    # Per-subject values for each method: (label, family, {subject: (dice, hd95)})
+    qc_lookup = dict(subject_records)
+    methods = [
+        ("CIT168", "atlas", "dice_atlas_vs_manual", "hd95_atlas_vs_manual_mm"),
+        ("CIT168 prob", "atlas", "dice_prob_atlas_vs_manual", "hd95_prob_atlas_vs_manual_mm"),
+        ("NMS-SNc", "atlas", "dice_nms_atlas_vs_manual", "hd95_nms_atlas_vs_manual_mm"),
+    ]
+    seed_values = {subject_id: (qc.get("dice_cnr_vs_manual"), qc.get("hd95_cnr_vs_manual_mm"))
+                   for subject_id, qc in qc_lookup.items()}
+    comparisons = [(label, family, {subject_id: (qc.get(dice_key), qc.get(hd95_key))
+                                    for subject_id, qc in qc_lookup.items()})
+                   for label, family, dice_key, hd95_key in methods]
+    if control_rows:
+        comparisons.append(("Propagated drawing (registration only)", "control",
+                            {row["subject_id"]: (row["dice_drawing"], row["hd95_drawing"]) for row in control_rows}))
+        comparisons.append(("NM-blind control (45% of region, no NM)", "control",
+                            {row["subject_id"]: (row["dice_nm_blind"], row["hd95_nm_blind"]) for row in control_rows}))
+
+    rng = np.random.default_rng(0)
+    rows = []
+    for metric_index, metric, better in [(0, "DICE", "higher"), (1, "HD95 (mm)", "lower")]:
+        for label, family, values in comparisons:
+            shared = sorted(subject_id for subject_id in values
+                            if subject_id in seed_values
+                            and isinstance(values[subject_id][metric_index], (int, float))
+                            and isinstance(seed_values[subject_id][metric_index], (int, float))
+                            and np.isfinite(values[subject_id][metric_index])
+                            and np.isfinite(seed_values[subject_id][metric_index]))
+            if not shared:
+                continue
+            seed = np.array([seed_values[s][metric_index] for s in shared], dtype=float)
+            other = np.array([values[s][metric_index] for s in shared], dtype=float)
+            difference = seed - other if better == "higher" else other - seed   # positive = NM seed better
+
+            seed_better = int((difference > 0).sum())
+            other_better = int((difference < 0).sum())
+            wilcoxon_p = float(wilcoxon(seed, other).pvalue) if np.any(difference != 0) else float("nan")
+            sign_p = float(binomtest(seed_better, seed_better + other_better, 0.5).pvalue) if seed_better + other_better else float("nan")
+            bootstrap = np.median(rng.choice(difference, size=(10000, len(difference))), axis=1)
+
+            rows.append({
+                "metric": metric,
+                "better_is": better,
+                "comparison": f"NM seed vs {label}",
+                "family": family,
+                "n_subjects": len(shared),
+                "median_nm_seed": float(np.median(seed)),
+                "median_other": float(np.median(other)),
+                "median_difference_nm_better_positive": float(np.median(difference)),
+                "ci95_low": float(np.percentile(bootstrap, 2.5)),
+                "ci95_high": float(np.percentile(bootstrap, 97.5)),
+                "nm_seed_better": seed_better,
+                "other_better": other_better,
+                "ties": int((difference == 0).sum()),
+                "wilcoxon_p": wilcoxon_p,
+                "sign_test_p": sign_p,
+            })
+
+    # Holm within each metric's three atlas tests (as on Poster_Accuracy), and across every test in the table
+    for metric in ["DICE", "HD95 (mm)"]:
+        atlas_rows = [row for row in rows if row["metric"] == metric and row["family"] == "atlas"]
+        for row, adjusted in zip(atlas_rows, holm(np.array([row["wilcoxon_p"] for row in atlas_rows]))):
+            row["holm_p_atlas_tests_this_metric"] = float(adjusted)
+    for row, adjusted in zip(rows, holm(np.array([row["wilcoxon_p"] for row in rows]))):
+        row["holm_p_all_tests"] = float(adjusted)
+
+    fieldnames = ["metric", "better_is", "comparison", "family", "n_subjects", "median_nm_seed", "median_other",
+                  "median_difference_nm_better_positive", "ci95_low", "ci95_high", "nm_seed_better",
+                  "other_better", "ties", "wilcoxon_p", "holm_p_atlas_tests_this_metric", "holm_p_all_tests",
+                  "sign_test_p"]
+    with open(output_file, "w", newline="") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row.get(key, "") for key in fieldnames})
+    return output_file
 
 
 # =================================================================
@@ -3885,6 +3951,10 @@ def run_group_qc_stage(output_path, manual_dir, selected_subjects, test_mode=Fal
             control_png = group_qc_output_path('Poster_NM_Blind_Control.png')
             build_nm_blind_control_figure(control_rows, control_png)
             log.info(f"NM-blind control figure saved: {control_png}")
+        statistics_csv = group_qc_output_path('Poster_Statistics.csv')
+        build_poster_statistics_table(subject_records, control_rows, statistics_csv)
+        log.info(f"Poster statistics table saved: {statistics_csv}")
+
 
     # =================================================================
     # Poster Figures

@@ -27,8 +27,7 @@ REQUIRED_PIPELINE_OPTIONS = [
     "--skip_core_rim_nm", "--nm_image_strategy", "--nm_image_n",
     "--hires", "--skip_template_builder", "--drawing_template",
     "--rebuild_template", "--nm_input", "--nm_echo",
-    "--cohort", "--nm_pattern", "--t1_pattern",
-    "--search_dilation_mm",
+    "--dataset", "--search_dilation_mm",
 ]
 
 EXPECTED_STAGES = ["1", "segment", "2", "group_qc", "all"]
