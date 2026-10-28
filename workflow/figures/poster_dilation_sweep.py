@@ -3,19 +3,14 @@
 Plot how the NM-defined mask changes as the propagated search region is grown.
 
 Reads one Stage 2 output root per --search_dilation_mm value, in directories named
-like results_dil-0.5, and plots DICE, precision and recall, and HD95 of the
-NM-defined mask against the expert (manual) masks as a function of the dilation, as one
-three-panel figure. By default the DICE panel also shows how much of each expert mask the grown search
-region covers.
+like results_dil-0.5, and draws one two-panel figure against the dilation: precision,
+recall and DICE of the NM-defined mask against the expert (manual) masks on one
+axis, and HD95 on the other.
 
-    python workflow/figures/poster_dilation_sweep.py \
-        --runs-root /path/to/NM_BioGen_PP/echo-1 \
-        --manual-dir /path/to/NM_BioGen/7T
+    python workflow/figures/poster_dilation_sweep.py --runs-root /path/to/NM_BioGen_PP/echo-1
 
 Each run directory needs a Group_QC_Pairwise_Summary.csv, written by --stage 2 or
---stage group_qc. The coverage line also needs
-sub-*/anat/Native_SN_Search_Region.nii.gz, which the pipeline writes from v3.0.
-The figure is saved as a PNG.
+--stage group_qc. The figure is saved as a transparent PNG.
 
 A post-hoc figure script written for the Brainhack Western 2026 poster; it is not
 part of the pipeline.
@@ -34,7 +29,7 @@ import matplotlib.pyplot as plt
 # =================================================================
 # Settings
 # =================================================================
-DICE_COLOUR = "#FF3B30"
+DICE_COLOUR = "0.15"
 PRECISION_COLOUR = "#C44E52"
 RECALL_COLOUR = "#4C72B0"
 HD95_COLOUR = "#55A868"
@@ -60,22 +55,6 @@ def read_metric(run_dir, column, mask_pair):
     return values
 
 
-def read_region_coverage(run_dir, manual_dir):
-    """Share of each subject's manual reference that falls inside the search region."""
-    coverage = {}
-    for region_file in sorted(Path(run_dir).glob("sub-*/anat/Native_SN_Search_Region.nii.gz")):
-        subject_id = region_file.parts[-3]
-        manual_matches = sorted(Path(manual_dir).glob(
-            f"{subject_id}/anat/{subject_id}_space-NM_label-SN_desc-manual_mask.nii*"))
-        if not manual_matches:
-            continue
-        region = nib.load(str(region_file)).get_fdata() > 0
-        manual = nib.load(str(manual_matches[0])).get_fdata() > 0
-        if manual.any():
-            coverage[subject_id] = float((region & manual).sum() / manual.sum())
-    return coverage
-
-
 def collect_runs(runs_root, run_pattern):
     """Every archived run that has a group QC summary, in order of dilation."""
     runs = []
@@ -96,10 +75,9 @@ def metric_matrix(runs, subjects, column, mask_pair):
     tables = [read_metric(run_dir, column, mask_pair) for _, run_dir in runs]
     return np.array([[table.get(subject, np.nan) for subject in subjects] for table in tables])
 
-
 def save_poster_figure(fig, output_file, dpi=400):
-    """Save a poster figure as a PNG at the given resolution."""
-    fig.savefig(str(output_file), dpi=dpi, bbox_inches='tight')
+    """Save a poster figure as a 400 dpi PNG."""
+    fig.savefig(str(output_file), dpi=dpi, bbox_inches='tight', transparent=True)
 
 
 def plot_sweep(axis, dilations, series, subjects, y_label, title,
@@ -110,73 +88,98 @@ def plot_sweep(axis, dilations, series, subjects, y_label, title,
     for column in range(values.shape[1]):
         axis.plot(dilations, values[:, column], color=colour, alpha=0.16, lw=1.0)
     median_values = np.nanmedian(values, axis=1)
-    axis.plot(dilations, median_values, color=colour, lw=3.5, marker="o", ms=9, label=label)
+    axis.plot(dilations, median_values, color=colour, lw=2.0, marker="o", ms=5, label=label)
 
     if chosen_mm is not None and chosen_mm in dilations:
         chosen_index = dilations.index(chosen_mm)
-        axis.axvline(chosen_mm, color="0.45", ls="--", lw=1.4)
+        axis.axvline(chosen_mm, color="0.45", ls="--", lw=1.0)
         axis.annotate(f"{median_values[chosen_index]:.2f}",
-                      xy=(chosen_mm, median_values[chosen_index]), xytext=(6, 10),
-                      textcoords="offset points", fontsize=19, fontweight="bold", color=colour)
+                      xy=(chosen_mm, median_values[chosen_index]), xytext=(4, 6),
+                      textcoords="offset points", fontsize=9, fontweight="bold", color=colour)
 
-    axis.set_xlabel("Search region grown by (mm)", fontsize=15)
-    axis.set_ylabel(y_label, fontsize=15, color=colour)
+    axis.set_xlabel("Search region grown by (mm)", fontsize=10)
+    axis.set_ylabel(y_label, fontsize=10)
     axis.set_xticks(dilations)
-    axis.tick_params(labelsize=13)
+    axis.tick_params(labelsize=9)
     if y_limits:
         axis.set_ylim(*y_limits)
-    axis.spines[["top"]].set_visible(False)
+    axis.spines[["top", "right"]].set_visible(False)
 
-    handles = [plt.Line2D([0], [0], color=colour, lw=3.5, marker="o", label=label)]
+    handles = [plt.Line2D([0], [0], color=colour, lw=2.0, marker="o", label=label)]
 
     if second_line is not None:
         second_values, second_colour = second_line
         if second_limits:                       # a different scale, so use the right-hand axis
             second_axis = axis.twinx()
             second_axis.plot(dilations, np.nanmedian(second_values, axis=1), color=second_colour,
-                             lw=2.5, ls=":", marker="s", ms=8)
-            second_axis.set_ylabel(second_label, fontsize=15, color=second_colour)
+                             lw=1.5, ls=":", marker="s", ms=4.5)
+            second_axis.set_ylabel(second_label, fontsize=10, color=second_colour)
             second_axis.set_ylim(*second_limits)
-            second_axis.tick_params(labelsize=13)
+            second_axis.tick_params(labelsize=9)
             second_axis.spines[["top"]].set_visible(False)
         else:                                   # same scale, so plot it alongside
             for column in range(second_values.shape[1]):
                 axis.plot(dilations, second_values[:, column], color=second_colour, alpha=0.13, lw=1.0)
             axis.plot(dilations, np.nanmedian(second_values, axis=1), color=second_colour,
-                      lw=3.0, ls="--", marker="s", ms=8)
-        handles.append(plt.Line2D([0], [0], color=second_colour, lw=2.5,
+                      lw=1.8, ls="--", marker="s", ms=4.5)
+        handles.append(plt.Line2D([0], [0], color=second_colour, lw=1.5,
                                   ls=":" if second_limits else "--", marker="s", label=second_label))
+    axis.set_title(title, fontsize=11)
+    axis.legend(handles=handles, fontsize=8, loc="best", framealpha=0.95)
 
-    axis.legend(handles=handles, fontsize=12.5, loc="best", framealpha=0.95)
-    axis.set_title(f"{title}\nn = {len(subjects)} subjects", fontsize=16)
+
+def plot_overlap(axis, dilations, precision, recall, dice, subjects, chosen_mm=None):
+    """Precision, recall and DICE on one 0-1 axis, so the tradeoff behind DICE is visible."""
+    # (values, colour, line style, marker, label, label offset at the chosen dilation)
+    series = [
+        (precision, PRECISION_COLOUR, "-", "o",
+         "Proportion of pipeline mask inside expert segmentation", (5, 5)),
+        (recall, RECALL_COLOUR, "-", "s",
+         "Proportion of expert segmentation captured by pipeline mask", (5, -14)),
+        (dice, DICE_COLOUR, "--", "D",
+         "DICE (balance of the two)", (-26, 4)),
+    ]
+    chosen_index = dilations.index(chosen_mm) if chosen_mm is not None and chosen_mm in dilations else None
+
+    for values, colour, line_style, marker, label, label_offset in series:
+        for column in range(values.shape[1]):
+            axis.plot(dilations, values[:, column], color=colour, alpha=0.10, lw=1.0)
+        median_values = np.nanmedian(values, axis=1)
+        axis.plot(dilations, median_values, color=colour, lw=2.0, ls=line_style,
+                  marker=marker, ms=5, label=label)
+        if chosen_index is not None:
+            axis.annotate(f"{median_values[chosen_index]:.2f}",
+                          xy=(chosen_mm, median_values[chosen_index]), xytext=label_offset,
+                          textcoords="offset points", fontsize=9, fontweight="bold", color=colour)
+
+    if chosen_index is not None:
+        axis.axvline(chosen_mm, color="0.45", ls="--", lw=1.0)
+
+    axis.set_xlabel("Search region grown by (mm)", fontsize=10)
+    axis.set_ylabel("Overlap with expert segmentation", fontsize=10)
+    axis.set_xticks(dilations)
+    axis.set_ylim(0.15, 1.02)
+    axis.tick_params(labelsize=9)
+    axis.spines[["top", "right"]].set_visible(False)
+    axis.legend(fontsize=8, loc="lower left", framealpha=0.95)
+    axis.set_title("Growing the search region finds more SN but adds non-SN voxels", fontsize=11)
 
 
-# =================================================================
-# Main
-# =================================================================
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--runs-root", type=Path, required=True,
                         help="Directory holding one Stage 2 output root per dilation.")
-    parser.add_argument("--manual-dir", type=Path, default=None,
-                        help="Per-subject manual SN masks, as passed to the pipeline's --manual_dir. "
-                             "Required unless --no-coverage is given.")
     parser.add_argument("--run-pattern", default="results_dil-*",
                         help="Glob selecting the run directories under --runs-root (default: results_dil-*).")
     parser.add_argument("--out-dir", type=Path, default=None,
-                        help="Where to write the figures (default: <runs-root>/poster_figures).")
+                        help="Where to write the figure (default: <runs-root>/poster_figures).")
     parser.add_argument("--chosen-mm", type=float, default=0.5,
-                        help="Dilation to mark on each plot (default: 0.5).")
+                        help="Dilation to mark on each panel (default: 0.5).")
     parser.add_argument("--mask-pair", default="cnr_vs_manual",
-                        help="Pair from Group_QC_Pairwise_Summary.csv to plot. The axis labels assume "
-                             "a *_vs_manual pair (default: cnr_vs_manual, the NM-defined mask).")
-    parser.add_argument("--no-coverage", action="store_true",
-                        help="Skip the search-region coverage line, which reads every mask.")
-    args = parser.parse_args()
-    if not args.no_coverage and args.manual_dir is None:
-        parser.error("--manual-dir is required unless --no-coverage is given.")
-    return args
+                        help="Pair from Group_QC_Pairwise_Summary.csv to plot. The labels assume a "
+                             "*_vs_manual pair (default: cnr_vs_manual, the NM-defined mask).")
+    return parser.parse_args()
 
 
 def main():
@@ -199,35 +202,18 @@ def main():
     recall = metric_matrix(runs, subjects, "recall", args.mask_pair)
     hd95 = metric_matrix(runs, subjects, "hd95_mm", args.mask_pair)
 
-    coverage = None
-    if not args.no_coverage:
-        coverage_tables = [read_region_coverage(run_dir, args.manual_dir) for _, run_dir in runs]
-        coverage = np.array([[table.get(subject, np.nan) for subject in subjects]
-                             for table in coverage_tables]) * 100
+    # One 1 x 2 poster figure: overlap (precision, recall, DICE) and boundary error (HD95)
+    fig, axes = plt.subplots(1, 2, figsize=(11, 5))
 
-    # One 1 x 3 poster figure: DICE, HD95, precision and recall
-    fig, axes = plt.subplots(1, 3, figsize=(27, 6.6))
-
-    plot_sweep(axes[0], dilations, (dice, DICE_COLOUR, "DICE"), subjects,
-               "DICE vs expert mask", "Effect of Dilation on DICE",
-               y_limits=(0.1, 0.9),
-               second_line=(coverage, COVERAGE_COLOUR) if coverage is not None else None,
-               second_label="Expert mask covered by the region (%)",
-               second_limits=(60, 104) if coverage is not None else None,
-               chosen_mm=args.chosen_mm)
+    plot_overlap(axes[0], dilations, precision, recall, dice, subjects, chosen_mm=args.chosen_mm)
 
     plot_sweep(axes[1], dilations, (hd95, HD95_COLOUR, "HD95"), subjects,
-               "HD95 vs expert Mask (mm)", "Effect of Dilation on HD95",
+               "HD95 distance to expert segmentation (mm)",
+               "Boundary error: 95th-percentile distance to expert segmentation",
                chosen_mm=args.chosen_mm)
 
-    plot_sweep(axes[2], dilations, (precision, PRECISION_COLOUR, "Precision: mask voxels that are SN"), subjects,
-               "Proportion", "Bigger region: finds more SN, but adds non-SN",
-               y_limits=(0.2, 1.02),
-               second_line=(recall, RECALL_COLOUR), second_label="SN voxels found",
-               chosen_mm=args.chosen_mm)
-
-    fig.tight_layout(w_pad=4.0)
-    sweep_file = panel_dir / "Poster_Sweep_1x3.png"
+    fig.tight_layout(w_pad=2.0)
+    sweep_file = panel_dir / "Poster_Sweep_1x2.png"
     save_poster_figure(fig, sweep_file)
     plt.close(fig)
     print(f"saved: {sweep_file}")

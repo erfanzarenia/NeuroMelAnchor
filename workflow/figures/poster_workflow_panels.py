@@ -4,6 +4,7 @@ Make the workflow panels for the poster.
 
 Workflow_1a_Input_NM.png     the subject's NM scan (input)
 Workflow_1b_Input_T1.png     the T1 reference (input, no NM contrast)
+Workflow_1c_Input_T1_Raw.png the subject's own T1, resampled onto the NM slab
 Workflow_2_Template.png      the study template
 Workflow_3_Tracing.png       the template with the SN and CP tracings
 Workflow_4_SearchRegion.png  the propagated search region in native space
@@ -17,9 +18,9 @@ The Brainhack Western 2026 poster panels were made with:
 
     python workflow/figures/poster_workflow_panels.py \
         --output-root /path/to/NM_BioGen_PP/echo-1/results_dil-0.5 \
-        --subject sub-059 --slice 30
+        --subject sub-059 --slice 30 --raw-t1-dir /path/to/NM_BioGen/7T
 
-The T1 panel needs the 0.5 mm MNI reference; if it is missing, generate it with
+Panel 1c is drawn only when --raw-t1-dir is given. The T1 panel needs the 0.5 mm MNI reference; if it is missing, generate it with
 workflow/tools/resample_mni_reference.py.
 
 A post-hoc figure script; it is not part of the pipeline.
@@ -29,6 +30,7 @@ from pathlib import Path
 
 import numpy as np
 import nibabel as nib
+from nibabel.processing import resample_from_to
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -133,6 +135,8 @@ def parse_args():
                         help="Directory with MNI_SNc_Manual and MNI_CP_Manual (default: <output-root>/manual_trace_v4).")
     parser.add_argument("--t1-reference", type=Path, default=DEFAULT_T1_REFERENCE,
                         help="T1 shown in the input panel (default: the 0.5 mm MNI reference in resources/).")
+    parser.add_argument("--raw-t1-dir", type=Path, default=None,
+                        help="BIDS root holding <subject>/anat/<subject>_acq-T1w.nii.gz; enables panel 1c.")
     parser.add_argument("--out-dir", type=Path, default=None,
                         help="Where to write the panels (default: poster_figures/ beside --output-root).")
     parser.add_argument("--fov-mm", type=float, nargs=2, default=list(DEFAULT_FOV_MM),
@@ -202,6 +206,13 @@ def main():
 
     save_panel(native_nm[subject_rows, subject_cols, subject_z], [],
                panel_dir / "Workflow_1a_Input_NM.png", fov_mm=fov_mm, mm_per_inch=args.mm_per_inch)
+    if args.raw_t1_dir is not None:
+        # the subject's T1 is axial and the NM slab is oblique, so put the T1 on the NM grid
+        # (scanner coordinates only, same session) to show the same plane and crop
+        raw_t1_img = nib.load(str(args.raw_t1_dir / args.subject / "anat" / f"{args.subject}_acq-T1w.nii.gz"))
+        raw_t1 = resample_from_to(raw_t1_img, native_img, order=3).get_fdata()
+        save_panel(raw_t1[subject_rows, subject_cols, subject_z], [],
+                   panel_dir / "Workflow_1c_Input_T1_Raw.png", fov_mm=fov_mm, mm_per_inch=args.mm_per_inch)
     save_panel(native_nm[subject_rows, subject_cols, subject_z],
                [(search_region[subject_rows, subject_cols, subject_z], REGION_COLOUR, "both")],
                panel_dir / "Workflow_4_SearchRegion.png", fov_mm=fov_mm, mm_per_inch=args.mm_per_inch)
