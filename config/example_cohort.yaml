@@ -34,6 +34,17 @@ template:
 
 nm_mask:
   search_dilation_mm: 0.0      # --search_dilation_mm, grow the propagated SN tracing (the poster used 0.5)
+  seed_cnr_floor: 0.05         # --seed_cnr_floor
+  seed_cnr_percentile: 55      # --seed_cnr_percentile
+  seed_min_cluster_voxels: 15  # --seed_min_cluster_voxels
+  seed_components_to_keep: 2   # --seed_components_to_keep
+  seed_cnr_fwhm: 1.0           # --seed_cnr_fwhm
+  seed_slice_fill: false       # --seed_slice_fill
+  seed_image: n4               # --seed_image {n4, raw}
+  trace_route: template        # --trace_route {template, t1}
+  skip_t1_outputs: false       # --skip_t1_outputs
+  t1_interp: linear            # --t1_interp {linear, nearest}
+  t1_seed_res: null            # --t1_seed_res, mm; null keeps the T1 grid
   skip_core_rim_nm: false      # --skip_core_rim_nm
 
 evaluation:
@@ -44,14 +55,9 @@ evaluation:
   nms_atlas_threshold: 0.25    # --nms_atlas_threshold
   skip_nms_atlas: false        # --skip_nms_atlas
 
-# Masking constants are NOT command-line options. They are module-level in
-# neuromelanchor_pipeline.py and echoed into the run log, so any result can be traced
-# back to the values used. Listed for reference; see docs/STATUS.md.
-masking_constants_readonly:
-  seed_cnr_floor: 0.05
-  seed_cnr_percentile: 55
-  seed_min_cluster_voxels: 15
-  seed_components_to_keep: 2
+# The core-rim constants are NOT command-line options. They are module-level in
+# neuromelanchor_pipeline.py and echoed into the run log. Listed for reference.
+core_rim_constants_readonly:
   core_rim_erosion_mm: 0.5
   core_rim_core_cnr_threshold: 0.05
   core_rim_rim_cnr_threshold: 0.10

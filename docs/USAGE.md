@@ -80,6 +80,15 @@ masks are compared only with each other and with the atlases.
 applied. The default of 0 uses the tracing as drawn. See [WORKFLOW.md](WORKFLOW.md)
 and the sweep section below.
 
+The October 2026 runs used:
+
+```bash
+python workflow/scripts/neuromelanchor_pipeline.py ... --stage 2 \
+  --dataset biogen --nm_input echo --nm_echo 1 --nm_image_strategy first \
+  --search_dilation_mm 0.5 --seed_cnr_fwhm 1.5 --seed_slice_fill --seed_cnr_floor 0 \
+  --seed_image raw --trace_route template
+```
+
 `--stage 2` runs group QC when it finishes.
 
 ## Stage group_qc: dashboards, group plots and poster figures
@@ -134,12 +143,27 @@ Stage 1 workflow.
 | Option | Default | Purpose |
 |---|---|---|
 | `--search_dilation_mm` | `0` | Grow the propagated SN search region by this many mm before the NM threshold. `0` keeps the tracing as drawn |
+| `--seed_cnr_floor` | `0.05` | Absolute minimum contrast ratio for a voxel to enter the NM mask |
+| `--seed_cnr_percentile` | `55` | Subject-adaptive percentile of the search region's contrast; voxels above it are kept. Set it low (0 to 5) to let the floor define the mask |
+| `--seed_min_cluster_voxels` | `15` | Drop connected clusters smaller than this |
+| `--seed_components_to_keep` | `2` | Keep only the largest N components; 2 for a bilateral SN |
+| `--seed_cnr_fwhm` | `1.0` | Smoothing of the contrast map before thresholding, in mm FWHM |
+| `--seed_slice_fill` | off | Also fill holes within each axial slice of the final mask |
+| `--seed_image` | `n4` | Build the mask from the stage 1 bias-corrected image (`n4`) or from the same run without bias correction (`raw`, which needs `--nm_image_strategy first`) |
+| `--trace_route` | `template` | How the traces reach NM space: through the stage 2 registration to the group template (`template`), or through the stage 1 NM to T1 and T1 to MNI transforms (`t1`) |
 | `--skip_core_rim_nm` | off | Disable the core-rim mask |
 
-The thresholding constants (`seed_cnr_floor`, `seed_cnr_percentile`,
-`core_rim_erosion_mm` and others) are module-level constants in the pipeline, not
-command-line options. They are echoed into the run log, so any result can be traced
-back to the values used. See [STATUS.md](STATUS.md).
+The core-rim thresholds (`core_rim_erosion_mm` and the others) are module-level constants
+in the pipeline rather than options. Every value is echoed into the run log, so any result can
+be traced back to the settings used.
+
+### T1w-space outputs
+
+| Option | Default | Purpose |
+|---|---|---|
+| `--skip_t1_outputs` | off | Do not write the T1w-space copy of the NM mask |
+| `--t1_interp` | `linear` | How the mask is moved to T1 space: `linear`, then kept at 0.5 or above, or `nearest` |
+| `--t1_seed_res` | T1 grid | Voxel size in mm for the T1w-space mask, on a grid covering the T1's field of view |
 
 ### Evaluation
 
@@ -173,8 +197,7 @@ for mm in 0 0.5 1.0 1.5 2.0 2.5 3.0; do
   # archive this run's outputs to /path/to/runs/results_dil-$mm
 done
 
-python workflow/figures/poster_dilation_sweep.py \
-  --runs-root /path/to/runs --manual-dir /path/to/manual_masks
+python workflow/figures/poster_dilation_sweep.py --runs-root /path/to/runs
 ```
 
 The poster used 0.5 mm.

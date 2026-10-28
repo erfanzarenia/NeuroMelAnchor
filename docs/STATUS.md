@@ -30,6 +30,8 @@ Current as of pipeline v3.0 (2026-09-14).
 
 ## Implemented but lightly exercised
 
+- **`--trace_route t1`, `--seed_image raw` and the T1w-space mask** (October 2026). Used for
+  the October runs but not yet compared systematically against the defaults.
 - **`--search_dilation_mm`** (new in v3.0). Evaluated on one cohort: BioGen 7T, echo
   1, 25 subjects, from 0 to 3 mm in 0.5 mm steps. The poster used 0.5 mm. The default
   stays 0, which keeps the propagated tracing as drawn.
@@ -73,7 +75,8 @@ Current as of pipeline v3.0 (2026-09-14).
    authors' own note in the pipeline's docstring. The NM mask keeps voxels above the
    55th percentile of the search region's contrast values, so roughly the top 45% of
    the region survives thresholding in every subject, however strong or weak its NM
-   contrast. The 0.05 floor is too low ever to change that. Subjects with weak
+   contrast. The 0.05 floor is too low ever to change that. Both values are now options, so this
+   can be tested with `--seed_cnr_percentile` and `--seed_cnr_floor`. Subjects with weak
    contrast therefore still get a mask of similar relative size and are likely to be
    segmented less accurately. The authors flag this for review.
 3. **"CNR" is a contrast ratio.** The map is (NM - CP) / CP with no noise term. File
@@ -81,9 +84,8 @@ Current as of pipeline v3.0 (2026-09-14).
 4. **v3.0 changes NM masks at default settings.** The mask is now morphologically
    closed (3 x 3 x 3) and intersected with the search region, so v3.0 and v2.5.0
    results are not directly comparable, even with `--search_dilation_mm 0`.
-5. **Masking constants are not command-line options.** `seed_cnr_floor` (0.05),
-   `seed_cnr_percentile` (55), `seed_min_cluster_voxels` (15),
-   `seed_components_to_keep` (2), `core_rim_erosion_mm` (0.5),
+5. **The core-rim constants are not command-line options.** The NM mask's settings are, but
+   `core_rim_erosion_mm` (0.5),
    `core_rim_core_cnr_threshold` (0.05), `core_rim_rim_cnr_threshold` (0.10),
    `core_rim_min_cluster_voxels` (25) and `core_rim_components_to_keep` (2) are
    module-level constants. They are echoed into the run log, so a result can always be
@@ -117,7 +119,7 @@ Current as of pipeline v3.0 (2026-09-14).
 
 ### Technical
 
-13. **The pipeline is a single script of about 4,000 lines.** It parses arguments at
+13. **The pipeline is a single script of about 4,200 lines.** It parses arguments at
     import time, so it cannot be imported or unit-tested in the usual way. The tests
     work around this by lifting functions out with `ast`.
 14. **`--output_root` must sit inside `--project_root`** when the V4 template is
@@ -133,11 +135,17 @@ Current as of pipeline v3.0 (2026-09-14).
 19. **The anchored atlas is saved as `anat/transform_Warped.nii.gz`,** the ANTs default
     name, rather than the `CIT168_Anchored` its DataSink key suggests. Code that reads
     it back already looks for that name first.
+20. **`--seed_image raw` fails when a scan's qform and sform disagree.** ANTs writes the
+    warped trace on the qform grid while nibabel reads the raw image's sform, so the grid
+    check rejects the subject (seen for BioGen `sub-059`).
 
 ### Reproducibility
 
-20. **`requirements.txt` pins one working environment**, not a tested minimum.
-21. **External tool versions are not recorded.** The run log now records the command
+21. **`requirements.txt` pins one working environment**, not a tested minimum.
+22. **Registrations are not bit-reproducible.** ANTs runs multithreaded without a fixed
+    seed, so two runs of the same code on the same data give slightly different transforms
+    and masks (seed Dice about 0.98 between repeat runs on BioGen `sub-002`).
+23. **External tool versions are not recorded.** The run log now records the command
     line and script path, but not the ANTs, SPM or ITK-SNAP versions, so results cannot
     be fully reproduced from the repository alone.
 
@@ -174,10 +182,10 @@ point for any future modularization. See [../legacy/README.md](../legacy/README.
 
 1. Revisit the threshold rule (items 2 and 3): a floor that can act, or a rule tied to
    each subject's contrast distribution, as the authors' note suggests.
-2. Record ANTs, SPM and ITK-SNAP versions in the run log (item 21), the cheapest real
+2. Record ANTs, SPM and ITK-SNAP versions in the run log (item 23), the cheapest real
    improvement to reproducibility.
-3. Promote the masking constants and `--search_dilation_mm` defaults to documented
-   command-line settings (item 5), keeping current values as defaults.
+3. Promote the core-rim constants to command-line options (item 5), keeping current values as
+   defaults.
 4. Volume-match the NM-blind control (item 11) before using it as evidence.
 5. Decide the fate of the native-space builder by comparing it with the MNI-space
    builder on one cohort.

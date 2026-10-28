@@ -27,7 +27,7 @@ NeuroMelAnchor/
 
 | File | Status | Purpose |
 |---|---|---|
-| `neuromelanchor_pipeline.py` | **canonical** | The whole pipeline, about 4,000 lines: all four stages, selected with `--stage` |
+| `neuromelanchor_pipeline.py` | **canonical** | The whole pipeline, about 4,200 lines: all four stages, selected with `--stage` |
 | `template_builder.py` | **canonical** | FireANTs iterative template construction in MNI space. Called by `--stage segment`; can also be run directly |
 | `template_builder_native.py` | experimental | The same approach on a chosen subject's native grid. Not called by the pipeline |
 | `native_template_prep.py` | experimental | Prepares per-subject inputs for the native builder |
@@ -48,6 +48,7 @@ The pipeline never calls these. Each has its own `--help`; see
 | `make_brainstem_mask.py` | Rebuilds the Stage 1 brainstem weighting mask |
 | `make_midbrain_prior.py` | Rebuilds the midbrain crop prior from BrainstemNavigator |
 | `bids_rename.py` | Renames scanner exports to BIDS-style names; a dry run unless `--apply` is given |
+| `prepare_biogen_3t.py` | Copies the BioGen 3T archive into the layout the pipeline expects; a dry run with `--dry_run` |
 | `mp2rage_uniden.py` | Third-party MP2RAGE UNI denoising, kept verbatim |
 | `mp2rage_uniden_batch.sh` | Runs the above over a BIDS directory |
 | `fit_r2star.py` | R2* and T2* fitting from multi-echo GRE; unrelated to the pipeline |
@@ -59,6 +60,7 @@ Post-hoc scripts that read finished outputs; see
 
 | File | Purpose |
 |---|---|
+| `mask_comparison_figures.py` | Per-subject and cohort figures comparing the NM mask with the atlases |
 | `poster_workflow_panels.py` | The method panels of the Brainhack Western 2026 poster |
 | `poster_dilation_sweep.py` | Metrics of the NM mask against `--search_dilation_mm`, across a sweep |
 

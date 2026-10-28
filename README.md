@@ -118,6 +118,7 @@ sub-01/
 <output_root>/
 ├── sub-XXX/
 │   ├── anat/         NM images, the search region, the NM mask and every comparison mask
+│   ├── anat_T1w/     the NM mask in the subject's T1 space
 │   ├── transforms/   Stage 1 and anchoring transforms (.h5)
 │   ├── cnr/          contrast map, seed diagnostics and all pairwise metrics
 │   ├── metrics/      realignment parameters and motion ranges

@@ -96,6 +96,19 @@ must be generated after cloning.
 The number in `thr025` follows the threshold option: `--prob_atlas_threshold 0.4` writes
 `Native_ProbCIT_SNc_thr040.nii.gz`.
 
+### `anat_T1w/`
+
+Written unless `--skip_t1_outputs` is given. The NM mask is moved to the subject's T1 with the
+stage 1 rigid NM to T1 transform, onto the T1 grid or onto a `--t1_seed_res` grid covering the
+same field of view.
+
+| File | Contents |
+|---|---|
+| `T1w_Tractography_Seed_SNc.nii.gz` | **The NM mask in T1 space**: kept at 0.5 or above, largest two components |
+| `T1w_Tractography_Seed_SNc_probabilistic.nii.gz` | With `--t1_interp linear` (the default): the interpolated mask before thresholding, 0 to 1 |
+| `T1w_Tractography_Seed_SNc_nearest-neighbor.nii.gz` | With `--t1_interp nearest`, in place of the file above |
+| `T1w_NM.nii.gz` | The NM image in T1 space, for checking the alignment |
+
 ### `transforms/`
 
 | File | Contents |

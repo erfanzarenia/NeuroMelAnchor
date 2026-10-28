@@ -11,6 +11,7 @@ extra maps. Each takes its paths on the command line; run any of them with
 | `make_brainstem_mask.py` | Rebuilds `HarvardOxford/Brainstem.nii.gz`, the weighting mask for the Stage 1 T1→MNI registration. |
 | `make_midbrain_prior.py` | Rebuilds `HarvardOxford/Midbrain.nii.gz` from BrainstemNavigator; this is the crop prior used by the template builders. |
 | `bids_rename.py` | Renames scanner exports into BIDS-style names. Dry run by default. |
+| `prepare_biogen_3t.py` | Copies the BioGen 3T archive into the layout the pipeline expects. Use `--dry_run` first. |
 | `mp2rage_uniden.py` | Third-party MP2RAGE UNI denoising (see file header for attribution). Kept verbatim. |
 | `mp2rage_uniden_batch.sh` | Runs the above across a BIDS directory. |
 | `fit_r2star.py` | Fits R2*/T2* maps from multi-echo GRE. Independent of the pipeline; needs FSL and MRtrix3. |

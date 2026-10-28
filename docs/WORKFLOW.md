@@ -95,7 +95,8 @@ measure how it differs from the alternatives.
 
 1. **Subject to group template (ANTs: rigid, affine and SyN).** A direct NM-to-NM registration
    rather than a reuse of Stage 1: both images have the same contrast, which is a much
-   better-posed problem than going through the T1 and MNI.
+   better-posed problem than going through the T1 and MNI. With `--trace_route t1` this step is
+   skipped and the stage 1 NM to T1 and T1 to MNI transforms are used instead.
 2. **Warp SN, CP and the CIT168 SNc to native NM space** with the inverse transform and
    nearest-neighbour interpolation, so the subject's own data is never resampled.
 3. **Search region.** The warped SN tracing, grown by `--search_dilation_mm`. The distance is
@@ -106,13 +107,16 @@ measure how it differs from the alternatives.
 4. **Contrast map.** The CP mask is eroded by one voxel, or left uneroded if fewer than 20
    voxels would remain. The CP reference is the mode of the CP intensities, estimated with a
    kernel density, or their median if that fails. The map is (NM - CP reference) / CP reference
-   inside the search region, smoothed with a 1 mm FWHM Gaussian. File names call it "CNR", but
+   inside the search region, smoothed with a Gaussian of `--seed_cnr_fwhm` (1 mm FWHM by default). The
+   map is computed from the stage 1 bias-corrected image, or with `--seed_image raw` from the same
+   run without bias correction. File names call it "CNR", but
    it is a contrast ratio with no noise term.
 5. **NM mask.** Search-region voxels whose smoothed ratio is at or above the larger of the floor
-   (0.05) and the region's 55th percentile, and at or below its 99th percentile. Holes are
+   (`--seed_cnr_floor`, 0.05) and the region's 55th percentile (`--seed_cnr_percentile`), and at or below its 99th percentile. Holes are
    filled, components under 15 voxels are dropped, and the largest two (left and right SN) are
    kept. The result is closed with a 3 x 3 x 3 element and intersected with the search region,
-   so the closing cannot grow the mask outside it.
+   so the closing cannot grow the mask outside it. `--seed_slice_fill` also fills holes within each
+   axial slice.
 6. **Core-rim variant.** The search region's core, more than 0.5 mm from its edge, and its rim
    are thresholded separately, at 0.05 and 0.10. The core is spatially more trustworthy, so it
    gets the more liberal threshold, while boundary false positives are what inflate HD95, so the
@@ -123,6 +127,9 @@ measure how it differs from the alternatives.
 8. **Probabilistic atlases.** The CIT168 and NMS probabilistic SNc maps are warped to native
    space with linear interpolation and thresholded, at 0.25 by default.
 9. **Scoring.** The masks are compared in twelve pairs; see [EVALUATION.md](EVALUATION.md).
+10. **T1w-space mask.** Unless `--skip_t1_outputs` is given, the NM mask is moved to the subject's
+    T1 with the stage 1 rigid NM to T1 transform, for analyses such as tractography that work in
+    T1 space.
 
 ### What the thresholding does in practice
 
@@ -131,6 +138,9 @@ ever to take effect, so the percentile alone sets the threshold, and roughly the
 search region survives it in every subject, however strong or weak that subject's contrast.
 Subjects with weak NM contrast therefore still receive a mask of similar relative size and are
 likely to be segmented less accurately. This is flagged for review in [STATUS.md](STATUS.md).
+
+Both values are command-line options, so a mask defined by an absolute floor can be tested by
+lowering `--seed_cnr_percentile` to 0 to 5.
 
 ---
 
