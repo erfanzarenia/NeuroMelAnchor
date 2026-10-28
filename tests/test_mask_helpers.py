@@ -326,3 +326,63 @@ def test_seed_closing_never_leaves_the_search_region(nifti_factory):
     diagnostics = json.loads(Path(diagnostics_out).read_text())
     assert diagnostics["seed_voxels"] == int(seed.sum())
     assert diagnostics["search_roi_voxels"] == int(inside.sum())
+
+
+# ----------------------------------------------------------- T1-space seed (oct-2)
+
+def test_first_nm_file_returns_the_first_in_sorted_order():
+    first_nm_file = load_functions("first_nm_file")["first_nm_file"]
+    assert first_nm_file(["run-2.nii.gz", "run-1.nii.gz"]) == "run-1.nii.gz"
+    assert first_nm_file("only.nii.gz") == "only.nii.gz"
+    with pytest.raises(ValueError):
+        first_nm_file([])
+
+
+def test_threshold_t1_seed_keeps_the_two_largest_components(nifti_factory):
+    threshold_t1_seed = load_functions("threshold_t1_seed")["threshold_t1_seed"]
+
+    fraction = np.zeros((30, 30, 30), dtype=np.float32)
+    fraction[2:6, 2:6, 2:6] = 0.9          # 64 voxels
+    fraction[10:13, 10:13, 10:13] = 0.6    # 27 voxels
+    fraction[20:22, 20:22, 20:22] = 0.7    # 8 voxels: third largest, dropped
+    fraction[25:28, 25:28, 25:28] = 0.4    # below 0.5, never part of the seed
+
+    out = threshold_t1_seed(nifti_factory("fraction.nii.gz", fraction), keep_components=2)
+
+    seed = nib.load(out)
+    assert Path(out).name == "T1w_Tractography_Seed_SNc.nii.gz"
+    assert seed.get_data_dtype() == np.uint8
+    assert int(np.asanyarray(seed.dataobj).sum()) == 64 + 27
+
+
+def test_t1_seed_reference_keeps_the_field_of_view(nifti_factory):
+    make_t1_seed_reference = load_functions("make_t1_seed_reference")["make_t1_seed_reference"]
+
+    t1 = nifti_factory("t1.nii.gz", np.zeros((20, 30, 40), dtype=np.float32))
+    reference = nib.load(make_t1_seed_reference(t1, 0.5))
+
+    assert reference.shape == (40, 60, 80)
+    assert np.allclose(reference.header.get_zooms()[:3], 0.5)
+    # The outer corner of the grid stays where the T1's was.
+    corner = lambda img: nib.affines.apply_affine(img.affine, [-0.5, -0.5, -0.5])
+    assert np.allclose(corner(reference), corner(nib.load(t1)))
+
+
+def test_seed_slice_fill_stays_inside_the_search_region(nifti_factory):
+    import matplotlib
+    matplotlib.use("Agg")
+    extract_tractography_seed = load_functions("extract_tractography_seed")["extract_tractography_seed"]
+
+    shape, inner = (24, 24, 24), (slice(6, 19), slice(6, 19))
+    nm = np.zeros(shape, dtype=np.float32); search = np.zeros(shape, dtype=np.float32); cp = np.zeros(shape, dtype=np.float32)
+    for x, intensity in [*zip(range(5, 10), [120, 140, 160, 180, 200]), *zip(range(11, 16), [200, 180, 160, 140, 120])]:
+        nm[(x, *inner)] = intensity; search[(x, *inner)] = 1
+    cp_block = (slice(18, 23), *inner)
+    nm[cp_block] = 100 + np.random.RandomState(0).normal(0, 3, size=nm[cp_block].shape); cp[cp_block] = 1
+
+    _, seed_out, _, _ = extract_tractography_seed(
+        nifti_factory("nm.nii.gz", nm), nifti_factory("search.nii.gz", search), nifti_factory("cp.nii.gz", cp),
+        cnr_floor=0.0, cnr_percentile=55, min_cluster_vox=15, keep_components=2, cnr_fwhm=1.5, slice_fill=True)
+
+    seed = nib.load(seed_out).get_fdata() > 0
+    assert seed.any() and not (seed & ~(search > 0)).any()

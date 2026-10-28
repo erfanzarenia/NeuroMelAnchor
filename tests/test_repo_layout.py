@@ -27,10 +27,12 @@ EXPECTED_TOOLS = [
     "make_midbrain_prior.py",
     "mp2rage_uniden.py",
     "mp2rage_uniden_batch.sh",
+    "prepare_biogen_3t.py",
     "resample_mni_reference.py",
 ]
 
 EXPECTED_FIGURES = [
+    "mask_comparison_figures.py",
     "poster_dilation_sweep.py",
     "poster_workflow_panels.py",
 ]

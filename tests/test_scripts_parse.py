@@ -28,6 +28,9 @@ REQUIRED_PIPELINE_OPTIONS = [
     "--hires", "--skip_template_builder", "--drawing_template",
     "--rebuild_template", "--nm_input", "--nm_echo",
     "--dataset", "--search_dilation_mm",
+    "--seed_cnr_floor", "--seed_cnr_percentile", "--seed_min_cluster_voxels",
+    "--seed_components_to_keep", "--seed_cnr_fwhm", "--seed_slice_fill", "--seed_image",
+    "--trace_route", "--skip_t1_outputs", "--t1_interp", "--t1_seed_res",
 ]
 
 EXPECTED_STAGES = ["1", "segment", "2", "group_qc", "all"]
@@ -84,7 +87,8 @@ def test_nipype_function_nodes_are_self_contained(name):
 STANDALONE_SCRIPTS = [
     *(TOOLS_DIR / name for name in [
         "bids_rename.py", "fit_r2star.py", "make_brainstem_mask.py",
-        "make_midbrain_prior.py", "resample_mni_reference.py"]),
+        "make_midbrain_prior.py", "prepare_biogen_3t.py", "resample_mni_reference.py"]),
+    FIGURES_DIR / "mask_comparison_figures.py",
     FIGURES_DIR / "poster_dilation_sweep.py",
     FIGURES_DIR / "poster_workflow_panels.py",
 ]
