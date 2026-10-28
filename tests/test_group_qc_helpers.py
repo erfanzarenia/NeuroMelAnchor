@@ -16,10 +16,10 @@ from conftest import load_objects
 
 @pytest.fixture(scope="module")
 def nm_blind_control_rows():
-    namespace = {"np": np, "nib": nib, "Path": Path,
+    # seed_cnr_percentile is set from --seed_cnr_percentile, whose default is 55.
+    namespace = {"np": np, "nib": nib, "Path": Path, "seed_cnr_percentile": 55,
                  "binary_erosion": binary_erosion, "distance_transform_edt": distance_transform_edt}
-    return load_objects("seed_cnr_percentile", "nm_blind_control_rows",
-                        namespace=namespace)["nm_blind_control_rows"]
+    return load_objects("nm_blind_control_rows", namespace=namespace)["nm_blind_control_rows"]
 
 
 def save_mask(path, mask):

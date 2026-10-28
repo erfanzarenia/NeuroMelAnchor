@@ -101,6 +101,7 @@ from templateflow.api import get
 from nilearn.image import mean_img
 from scipy.stats import gaussian_kde, wilcoxon
 from scipy.ndimage import distance_transform_edt, binary_erosion
+from matplotlib.patheffects import withStroke
 
 from nipype.algorithms.misc import Gunzip
 from nipype import Workflow, Node, MapNode
@@ -157,27 +158,44 @@ parser.add_argument('--rebuild_template', action='store_true', help="Rebuild and
 parser.add_argument('--search_dilation_mm', default=0.0, type=float, help="Grow the propagated SN search region by this many mm before NM refinement (default: 0 = current behaviour)")
 parser.add_argument("--dataset", choices=["biogen", "snit"], default="biogen",help="Input file naming: biogen = sub-X_run-1_echo-N_part-mag_MEGRE + sub-X_acq-T1w; "
                          "snit = sub-X_acq-NM_rec-DIS2D_run-*_echo-N_part-mag_GRE + sub-X_acq-MP2RAGEpostproc_run-01_T1w (default: biogen)")
-
-
-
+parser.add_argument('--seed_cnr_floor', default=0.05, type=float, help="Absolute minimum CNR for a voxel to enter the NM seed (default: 0.05)")
+parser.add_argument('--seed_cnr_percentile', default=55, type=float, help="Subject-adaptive percentile of search-region CNR; the seed keeps voxels above it. Set low (0-5) to let --seed_cnr_floor define the mask absolutely (default: 55)")
+parser.add_argument('--seed_min_cluster_voxels', default=15, type=int, help="Drop connected clusters smaller than this many voxels (default: 15)")
+parser.add_argument('--seed_components_to_keep', default=2, type=int, help="Keep only the N largest connected components; SN is bilateral so 2 is correct (default: 2)")
 parser.add_argument("--nm_input", choices=["combo", "echo"], default="combo", help="NM source: 'combo' = vendor-combined multi-echo GRE (default, higher SNR)'echo' = single MEGRE echo, selected by --nm_echo")
 parser.add_argument("--nm_echo", default=3, type=int, help="Echo number to use when --nm_input echo (default: 2)")
+parser.add_argument('--seed_cnr_fwhm', default=1.0, type=float, help="FWHM (mm) used to smooth the CNR map before thresholding the seed (default: 1.0; 1.5 recommended)")
+parser.add_argument('--seed_slice_fill', action='store_true', help="Fill holes within each slice of the final seed (holes open in 3D survive the 3D fill)")
+parser.add_argument('--skip_t1_outputs', action='store_true', help="Stage 2: do not write T1w-space copies of the seed. By default the seed is moved to T1w with the stage-1 rigid NM->T1 transform (linear, >= 0.5, largest pieces kept)")
+parser.add_argument('--seed_image', choices=['n4', 'raw'], default='n4', help="Stage 2: image the seed is built from. n4 = stage-1 bias-corrected image (default); raw = the same NM run without bias correction")
+parser.add_argument('--trace_route', choices=['template', 't1'], default='template', help="Stage 2: how the SN/CP traces reach NM space. template = stage-2 NM->template registration (default); t1 = stage-1 transforms (NM->T1, then T1->MNI)")
+parser.add_argument('--t1_interp', choices=['linear', 'nearest'], default='linear', help="Stage 2: how the seed is moved from NM to T1w space. linear = linear, then keep >= 0.5 (default); nearest = nearest-neighbour")
+parser.add_argument('--t1_seed_res', type=float, default=None,
+                    help="T1 seed voxel size in mm; omitted = original T1 grid")
+
+
 args = parser.parse_args()
 if args.skip_template_builder:
     args.drawing_template = 'naive'
+if args.t1_seed_res is not None:
+    if not np.isfinite(args.t1_seed_res) or args.t1_seed_res <= 0:
+        parser.error("--t1_seed_res must be positive and finite")
 
 # =================================================================
 # NM Mask Method Settings
 # =================================================================
 
 # This is minimum allowed cnr threshold for NM-defined seed (Accept voxels must be at least 5% brighter than background)
-seed_cnr_floor = 0.05
+seed_cnr_floor = args.seed_cnr_floor
 # Subject-adpative threshold inside the SNsearch mask. Keep's voxels above a specified percentile
-seed_cnr_percentile = 55
+seed_cnr_percentile = args.seed_cnr_percentile
 # Removes tiny, disconnected islands (Connected clusters must be 15 voxels or more. Somewhat arbitrary but rectified by keeping only 2 components)
-seed_min_cluster_voxels = 15
+seed_min_cluster_voxels = args.seed_min_cluster_voxels
 # Keeps only the largest 2 connected components
-seed_components_to_keep = 2
+seed_components_to_keep = args.seed_components_to_keep
+
+seed_cnr_fwhm = args.seed_cnr_fwhm
+seed_slice_fill = args.seed_slice_fill
 
 # Removes approximalty 1 mm from the outside boundary of the mask (assumes uncertain boundaries)
 core_rim_erosion_mm = 0.5
@@ -249,6 +267,12 @@ log.info(f"search_dilation_mm  : {args.search_dilation_mm}")
 log.info(f"script              : {Path(__file__).resolve()}")
 log.info(f"command             : {' '.join(sys.argv)}")
 log.info(f"dataset             : {args.dataset}")
+log.info(f"seed_cnr_fwhm       : {seed_cnr_fwhm}")
+log.info(f"seed_slice_fill     : {seed_slice_fill}")
+log.info(f"seed_image          : {args.seed_image}")
+log.info(f"trace_route         : {args.trace_route}")
+log.info(f"t1_interp           : {args.t1_interp}")
+log.info(f"t1_seed_res         : {args.t1_seed_res}")
 log.info("=" * 60)
 
 # =================================================================
@@ -467,6 +491,20 @@ log.info(f"Found {len(subjects)} subjects(s): {subjects}")
 # =================================================================
 # Templates and Masks
 # =================================================================
+# NM file naming differs between cohorts. Stage 1 reads these files; stage 2 reads them again for --seed_image raw.
+if args.dataset == "snit":
+    echo_pattern = f'{{subject_id}}/anat/{{subject_id}}_acq-NM_rec-DIS2D_run-*_echo-{args.nm_echo}_part-mag_GRE.nii.gz'
+else:
+    echo_pattern = f'{{subject_id}}/anat/{{subject_id}}_run-1_echo-{args.nm_echo}_part-mag_MEGRE.nii.gz'
+
+if args.nm_input == "combo":
+    NM_Data = {'runs': '{subject_id}/anat/{subject_id}_acq-CombEchoNM*_GRE.nii.gz'}
+else:
+    NM_Data = {'runs': echo_pattern}
+
+if args.seed_image == 'raw' and args.nm_image_strategy != 'first':
+    raise ValueError("--seed_image raw needs --nm_image_strategy first (the seed must come from the run stage 1 used).")
+
 mask_dir = project_root / "resources" / "tpl-MNI152NLin2009cAsym"
 use_v4_drawing = args.drawing_template == 'v4'
 trace_dir = output_base / ("manual_trace_v4" if use_v4_drawing else "manual_trace")
@@ -633,6 +671,9 @@ def combine_transforms(t1_to_mni_composite, nm_to_t1_composite):
     """Return transforms in the order expected by ANTs ApplyTransforms."""
     return [t1_to_mni_composite, nm_to_t1_composite]
 
+def combine_prealign_transforms(nm_to_t1_inverse, t1_to_mni_inverse):
+    return [nm_to_t1_inverse, t1_to_mni_inverse]
+
 def generate_qc_nm(nm_mni_image, t1_template_image):
     import os
     import matplotlib
@@ -704,7 +745,7 @@ def generate_qc_atlas(atlas_mask_mni, t1_mni_image):
     return out_png
 
 def extract_tractography_seed(nm_image, native_sn_mask, native_cp_mask, cnr_floor=0.05, cnr_percentile=60, min_cluster_vox=15,
-    keep_components=2):
+    keep_components=2, cnr_fwhm=1.0, slice_fill=False):
     """
     Create the subject-specific NM seed mask.
 
@@ -747,6 +788,9 @@ def extract_tractography_seed(nm_image, native_sn_mask, native_cp_mask, cnr_floo
     nm_data = nm_img.get_fdata()
     sn_mask = nib.load(native_sn_mask).get_fdata().astype(bool)
     cp_mask = nib.load(native_cp_mask).get_fdata().astype(bool)
+    if nm_data.shape[:3] != sn_mask.shape or not np.allclose(nm_img.affine, nib.load(native_sn_mask).affine, atol=1e-4):
+        raise ValueError("The seed image and the warped SN trace are not on the same voxel grid.")
+    
     cp_mask_eroded = ndi.binary_erosion(cp_mask, iterations=1)
     if cp_mask_eroded.sum() < 20:
         print("CP erosion left too few voxels; using uneroded mask.")
@@ -780,7 +824,7 @@ def extract_tractography_seed(nm_image, native_sn_mask, native_cp_mask, cnr_floo
         nm_data[sn_mask & finite_nm_voxels] - cp_reference_intensity) / cp_reference_intensity
     cnr_img = nib.Nifti1Image(cnr_data, nm_img.affine, nm_img.header)
 
-    smoothed_cnr_img = smooth_img(cnr_img, fwhm=1.0)
+    smoothed_cnr_img = smooth_img(cnr_img, fwhm=float(cnr_fwhm))
     smoothed_cnr_data = smoothed_cnr_img.get_fdata()
 
     sn_cnr_values = smoothed_cnr_data[sn_mask]
@@ -804,12 +848,21 @@ def extract_tractography_seed(nm_image, native_sn_mask, native_cp_mask, cnr_floo
     # Close small gaps in the mask without letting it grow outside the search region.
     final_seed_mask = (ndi.binary_closing(final_seed_mask, structure=np.ones((3, 3, 3), dtype=bool))
                        & sn_mask).astype(np.uint8)
-
+    if slice_fill:
+        for z in range(final_seed_mask.shape[2]):
+            final_seed_mask[:, :, z] = ndi.binary_fill_holes(final_seed_mask[:, :, z])
+        final_seed_mask = (final_seed_mask.astype(bool) & sn_mask).astype(np.uint8)
 
     cnr_out = os.path.abspath('Subject_CNR_Map_Smoothed.nii.gz')
     seed_out = os.path.abspath('Native_Tractography_Seed_SNc.nii.gz')
     nib.save(smoothed_cnr_img, cnr_out)
-    nib.save(nib.Nifti1Image(final_seed_mask, nm_img.affine, nm_img.header), seed_out)
+    # Save the seed with the search region's header (written by ANTs), not the seed image's own header.
+    # A raw file can carry two different position records (BioGen sub-059 does), which would shift the seed in ANTs.
+    grid_img = nib.load(native_sn_mask)
+    seed_header = grid_img.header.copy()
+    seed_header.set_data_dtype(np.uint8)
+    nib.save(nib.Nifti1Image(final_seed_mask, grid_img.affine, seed_header), seed_out)
+
 
     all_values = np.concatenate([cp_values, sn_values])
     histogram_bins = np.linspace(np.percentile(all_values, 1), np.percentile(all_values, 99), 60)
@@ -861,6 +914,58 @@ def make_bias_corrected_reference(in_files):
     reference_image_path = os.path.abspath("mean_NM_bias_corrected.nii.gz")
     mean_img(files).to_filename(reference_image_path)
     return reference_image_path
+
+def threshold_t1_seed(seed_fraction, keep_components=2):
+    """Binarise the linearly warped T1w seed at 0.5 and keep the largest pieces (resampling can shed specks)."""
+    import os
+    import numpy as np
+    import nibabel as nib
+    from scipy import ndimage as ndi
+    img = nib.load(seed_fraction)
+    mask = np.asarray(img.dataobj) >= 0.5
+    labels, n = ndi.label(mask)
+    if n > keep_components:
+        sizes = np.bincount(labels.ravel())[1:]
+        mask = np.isin(labels, np.argsort(sizes)[::-1][:keep_components] + 1)
+    header = img.header.copy()
+    header.set_data_dtype(np.uint8)
+    out = os.path.abspath('T1w_Tractography_Seed_SNc.nii.gz')
+    nib.save(nib.Nifti1Image(mask.astype(np.uint8), img.affine, header), out)
+    return out
+
+def make_t1_seed_reference(t1_file, resolution):
+    """Build a grid with the T1 orientation and outer corner."""
+    import os
+    import numpy as np
+    import nibabel as nib
+
+    img = nib.load(t1_file)
+    spacing = np.linalg.norm(img.affine[:3, :3], axis=0)
+    direction = img.affine[:3, :3] / spacing
+
+    if not np.allclose(direction.T @ direction, np.eye(3), atol=1e-5):
+        raise ValueError("T1 affine contains shear; check grid construction.")
+
+    extent = np.array(img.shape[:3]) * spacing
+    shape = np.maximum(1, np.rint(extent / resolution)).astype(int)
+    corner = nib.affines.apply_affine(img.affine, [-0.5, -0.5, -0.5])
+
+    affine = np.eye(4)
+    affine[:3, :3] = direction * resolution
+    affine[:3, 3] = corner + direction @ np.full(3, resolution / 2)
+
+    out = os.path.abspath("T1_seed_reference.nii.gz")
+    reference = nib.Nifti1Image(np.zeros(tuple(shape), dtype=np.uint8), affine)
+    nib.save(reference, out)
+    return out
+
+def first_nm_file(in_files):
+    """Return the file stage 1 uses with --nm_image_strategy first (the first one in sorted order)."""
+    files = [in_files] if isinstance(in_files, str) else sorted(in_files)
+    if len(files) == 0:
+        raise ValueError("No NM files were found.")
+    return files[0]
+
 
 def select_nm_image_files(in_files, strategy="mean", n=None):
     """Choose which CombEchoNM files enter the NM image path."""
@@ -1533,18 +1638,11 @@ if run_phase1:
     inputnode.iterables = [('subject_id', subjects)]
 
 
-    # Input file naming differs between cohorts; --dataset chooses the patterns.
     if args.dataset == "snit":
-        echo_pattern = f'{{subject_id}}/anat/{{subject_id}}_acq-NM_rec-DIS2D_run-*_echo-{args.nm_echo}_part-mag_GRE.nii.gz'
         T1_Data = {'T1': '{subject_id}/anat/{subject_id}_acq-MP2RAGEpostproc_run-01_T1w.nii.gz'}
     else:
-        echo_pattern = f'{{subject_id}}/anat/{{subject_id}}_run-1_echo-{args.nm_echo}_part-mag_MEGRE.nii.gz'
         T1_Data = {'T1': '{subject_id}/anat/{subject_id}_acq-T1w.nii.gz'}
 
-    if args.nm_input == "combo":
-        NM_Data = {'runs': '{subject_id}/anat/{subject_id}_acq-CombEchoNM*_GRE.nii.gz'}
-    else:
-        NM_Data = {'runs': echo_pattern}
 
     SelectNM = Node(SelectFiles(NM_Data, base_directory=str(design_dir)), name='SelectNM')
 
@@ -2048,6 +2146,23 @@ if run_phase2:
     nm_to_template.inputs.initial_moving_transform_com = 1
     nm_to_template.inputs.environ = safe_env
 
+    # Which transforms carry template-space masks (SN/CP traces, QC atlases) to NM space
+    if args.trace_route == 't1':
+        GrabT1Route = Node(SelectFiles({
+            'nm_to_t1_inv': '{subject_id}/transforms/NM_to_T1_InvComposite/transformInverseComposite.h5',
+            't1_to_mni_inv': '{subject_id}/transforms/T1_to_MNI_InvComposite/transformInverseComposite.h5',
+        }, base_directory=str(output_base)), name='GrabT1Route')
+        t1_route = Node(Function(input_names=['nm_to_t1_inverse', 't1_to_mni_inverse'], output_names=['transforms'],
+                                 function=combine_prealign_transforms), name='T1_Route_Transforms')
+        to_native, to_native_field = t1_route, 'transforms'
+    else:
+        to_native, to_native_field = nm_to_template, 'inverse_composite_transform'
+
+    # Which image the seed is built from
+    if args.seed_image == 'raw':
+        GrabRawNM = Node(SelectFiles(NM_Data, base_directory=str(design_dir)), name='GrabRawNM')
+        first_raw_nm = Node(Function(input_names=['in_files'], output_names=['nm_file'], function=first_nm_file), name='First_Raw_NM')
+
     # =================================================================
     # Transform Masks to Subject Space
     # =================================================================
@@ -2109,12 +2224,14 @@ if run_phase2:
     # =================================================================
     # Compute CNR + Tractography Seed
     # =================================================================
-    cnr_seed = Node(Function(input_names=['nm_image', 'native_sn_mask', 'native_cp_mask', 'cnr_floor', 'cnr_percentile', 'min_cluster_vox', 'keep_components'], 
+    cnr_seed = Node(Function(input_names=['nm_image', 'native_sn_mask', 'native_cp_mask', 'cnr_floor', 'cnr_percentile', 'min_cluster_vox', 'keep_components', 'cnr_fwhm', 'slice_fill'], 
                             output_names=['cnr_out', 'seed_out', 'histogram', 'seed_diagnostics'], function=extract_tractography_seed), name='CNR_Seed')
     cnr_seed.inputs.cnr_floor = seed_cnr_floor
     cnr_seed.inputs.cnr_percentile = seed_cnr_percentile
     cnr_seed.inputs.min_cluster_vox = seed_min_cluster_voxels
     cnr_seed.inputs.keep_components = seed_components_to_keep
+    cnr_seed.inputs.cnr_fwhm = seed_cnr_fwhm
+    cnr_seed.inputs.slice_fill = seed_slice_fill
 
     # =================================================================
     # Search Region (propagated SN mask, optionally grown)
@@ -2228,6 +2345,43 @@ if run_phase2:
         qc_node.inputs.manual_mask = None
 
     # =================================================================
+    # Seed to T1w (stage-1 rigid NM -> T1)
+    # =================================================================
+    if not args.skip_t1_outputs:
+        t1_file_pattern = ('{subject_id}/anat/{subject_id}_acq-MP2RAGEpostproc_run-01_T1w.nii.gz' if args.dataset == 'snit'
+                           else '{subject_id}/anat/{subject_id}_acq-T1w.nii.gz')
+        GrabT1 = Node(SelectFiles({'t1': t1_file_pattern}, base_directory=str(design_dir)), name='GrabT1')
+
+        GrabNMtoT1 = Node(SelectFiles({'nm_to_t1': '{subject_id}/transforms/NM_to_T1_Composite/transformComposite.h5'},
+                                      base_directory=str(output_base)), name='GrabNMtoT1')
+        if args.t1_seed_res is not None:
+            t1_seed_reference = Node(
+                Function(input_names=['t1_file', 'resolution'],
+                        output_names=['reference_image'],
+                        function=make_t1_seed_reference),
+                name='T1_Seed_Reference',
+            )
+            t1_seed_reference.inputs.resolution = args.t1_seed_res
+
+        seed_to_t1 = Node(ApplyTransforms(), name='Seed_to_T1')
+        seed_to_t1.inputs.dimension = 3
+        seed_to_t1.inputs.interpolation = 'NearestNeighbor' if args.t1_interp == 'nearest' else 'Linear'
+        seed_to_t1.inputs.output_image = ('T1w_Tractography_Seed_SNc_probabilistic.nii.gz' if args.t1_interp == 'linear'
+                                          else 'T1w_Tractography_Seed_SNc_nearest-neighbor.nii.gz')
+
+        seed_to_t1.inputs.environ = safe_env
+
+        seed_t1_binary = Node(Function(input_names=['seed_fraction', 'keep_components'], output_names=['seed_t1'],
+                                       function=threshold_t1_seed), name='Seed_T1_Binary')
+        seed_t1_binary.inputs.keep_components = seed_components_to_keep
+
+        nm_to_t1_qc = Node(ApplyTransforms(), name='NM_to_T1_QC')
+        nm_to_t1_qc.inputs.dimension = 3
+        nm_to_t1_qc.inputs.interpolation = 'LanczosWindowedSinc'
+        nm_to_t1_qc.inputs.output_image = 'T1w_NM.nii.gz'
+        nm_to_t1_qc.inputs.environ = safe_env
+
+    # =================================================================
     # Datasink Phase 2
     # =================================================================
 
@@ -2243,18 +2397,15 @@ if run_phase2:
         (inputnode2,        datasink2, [('subject_id', 'container')]),
         (search_region,     datasink2, [('search_file', 'anat.@Search_Region')]),
 
-        (GrabPhase1,        nm_to_template, [('bias_nm', 'moving_image')]),
-
         (GrabPhase1,        mni_to_nm_sn, [('bias_nm', 'reference_image')]),
-        (nm_to_template,    mni_to_nm_sn, [('inverse_composite_transform', 'transforms')]),
+        (to_native,         mni_to_nm_sn, [(to_native_field, 'transforms')]),
         
         (GrabPhase1,        mni_to_nm_cp, [('bias_nm', 'reference_image')]),
-        (nm_to_template,    mni_to_nm_cp, [('inverse_composite_transform', 'transforms')]),
+        (to_native,         mni_to_nm_cp, [(to_native_field, 'transforms')]),
         
         (GrabPhase1,        mni_to_nm_atlas, [('bias_nm', 'reference_image')]),
-        (nm_to_template,    mni_to_nm_atlas, [('inverse_composite_transform', 'transforms')]),
+        (to_native,         mni_to_nm_atlas, [(to_native_field, 'transforms')]),
     
-        (GrabPhase1,        cnr_seed, [('bias_nm', 'nm_image')]),
         (mni_to_nm_sn,      search_region, [('output_image', 'native_sn_mask')]),
         (search_region,     cnr_seed, [('search_file', 'native_sn_mask')]),
 
@@ -2288,11 +2439,26 @@ if run_phase2:
                                         ('seed_diagnostics', 'cnr.@Seed_Diagnostics')]),
         (qc_node,           datasink2, [('qc_file', 'cnr.@SN_Mask_Dice_QC')]),
     ]
+    if args.trace_route == 't1':
+        wf2_connections += [
+            (inputnode2,    GrabT1Route, [('subject_id', 'subject_id')]),
+            (GrabT1Route,   t1_route, [('nm_to_t1_inv', 'nm_to_t1_inverse'), ('t1_to_mni_inv', 't1_to_mni_inverse')]),
+        ]
+    else:
+        wf2_connections += [(GrabPhase1, nm_to_template, [('bias_nm', 'moving_image')])]
 
+    if args.seed_image == 'raw':
+        wf2_connections += [
+            (inputnode2,    GrabRawNM, [('subject_id', 'subject_id')]),
+            (GrabRawNM,     first_raw_nm, [('runs', 'in_files')]),
+            (first_raw_nm,  cnr_seed, [('nm_file', 'nm_image')]),
+        ]
+    else:
+        wf2_connections += [(GrabPhase1, cnr_seed, [('bias_nm', 'nm_image')])]
     if prob_atlas_mni is not None:
         wf2_connections += [
             (GrabPhase1,          mni_to_nm_prob_atlas, [('bias_nm', 'reference_image')]),
-            (nm_to_template,      mni_to_nm_prob_atlas, [('inverse_composite_transform', 'transforms')]),
+            (to_native,           mni_to_nm_prob_atlas, [(to_native_field, 'transforms')]),
             (mni_to_nm_prob_atlas, prob_atlas_thresh, [('output_image', 'prob_atlas')]),
             (prob_atlas_thresh,   qc_node, [('mask_out', 'prob_atlas_mask')]),
             (prob_atlas_thresh,   datasink2, [('prob_out', 'anat.@ProbCIT_SNc_Probability'),
@@ -2302,7 +2468,7 @@ if run_phase2:
     if nms_atlas_mni is not None:
         wf2_connections += [
             (GrabPhase1,          mni_to_nm_nms_atlas, [('bias_nm', 'reference_image')]),
-            (nm_to_template,      mni_to_nm_nms_atlas, [('inverse_composite_transform', 'transforms')]),
+            (to_native,           mni_to_nm_nms_atlas, [(to_native_field, 'transforms')]),
             (mni_to_nm_nms_atlas, nms_atlas_thresh, [('output_image', 'prob_atlas')]),
             (nms_atlas_thresh,    qc_node, [('mask_out', 'nms_atlas_mask')]),
             (nms_atlas_thresh,    datasink2, [('prob_out', 'anat.@NMS_SNc_Probability'),
@@ -2324,6 +2490,32 @@ if run_phase2:
             (SelectManual,  qc_node, [('manual_sn', 'manual_mask')]),
 
         ]
+
+    if not args.skip_t1_outputs:
+        wf2_connections += [
+            (inputnode2,     GrabT1, [('subject_id', 'subject_id')]),
+            (inputnode2,     GrabNMtoT1, [('subject_id', 'subject_id')]),
+            (cnr_seed,       seed_to_t1, [('seed_out', 'input_image')]),
+            (GrabNMtoT1,     seed_to_t1, [('nm_to_t1', 'transforms')]),
+            (seed_to_t1,     seed_t1_binary, [('output_image', 'seed_fraction')]),
+            (GrabPhase1,     nm_to_t1_qc, [('bias_nm', 'input_image')]),
+            (GrabT1,         nm_to_t1_qc, [('t1', 'reference_image')]),
+            (GrabNMtoT1,     nm_to_t1_qc, [('nm_to_t1', 'transforms')]),
+            (seed_t1_binary, datasink2, [('seed_t1', 'anat_T1w.@Seed')]),
+            (seed_to_t1,     datasink2, [('output_image', 'anat_T1w.@SeedFraction')]),
+            (nm_to_t1_qc,    datasink2, [('output_image', 'anat_T1w.@NM')]),
+        ]
+        if args.t1_seed_res is None:
+            wf2_connections += [
+                (GrabT1, seed_to_t1, [('t1', 'reference_image')]),
+            ]
+        else:
+            wf2_connections += [
+                (GrabT1, t1_seed_reference, [('t1', 't1_file')]),
+                (t1_seed_reference, seed_to_t1,
+                [('reference_image', 'reference_image')]),
+            ]
+
     wf2.connect(wf2_connections)
 
     # =================================================================
@@ -2939,10 +3131,10 @@ GROUP_QC_COMPONENT_FIELDS = [
 # =================================================================
 
 def save_poster_figure(fig, output_file, dpi=400):
-    """Save a poster figure as PNG and as SVG, which stays sharp at any print size."""
+    """Save a poster figure as a transparent PNG and SVG, which stays sharp at any print size."""
     output_file = Path(output_file)
-    fig.savefig(str(output_file.with_suffix('.png')), dpi=dpi, bbox_inches='tight')
-    fig.savefig(str(output_file.with_suffix('.svg')), bbox_inches='tight')
+    fig.savefig(str(output_file.with_suffix('.png')), dpi=dpi, bbox_inches='tight', transparent=True)
+    fig.savefig(str(output_file.with_suffix('.svg')), bbox_inches='tight', transparent=True)
 
 POSTER_METHODS = [
     ('CNR mask', 'dice_cnr_vs_manual', 'hd95_cnr_vs_manual_mm', '#C44E52'),
@@ -3018,7 +3210,7 @@ def build_poster_accuracy_figure(subject_records, output_file):
         axis.set_xticks(range(len(columns)))
         axis.set_xticklabels([label for label, _, _ in columns], fontsize=10)
         axis.set_ylabel(metric_name)
-        axis.set_title(f'{metric_name}\n({better} is better, n = {len(shared)})', fontsize=11)
+        axis.set_title(f'{metric_name}\n({better} is better)', fontsize=11)
         axis.set_ylim(0, span * 1.45)
         axis.spines[['top', 'right']].set_visible(False)
 
@@ -3313,9 +3505,29 @@ def nm_blind_control_rows(subject_ids, output_path, manual_dir):
 
 def build_nm_blind_control_figure(rows, output_file):
     """Per subject: registration only to same share of the region without NM -> NM contrast seed."""
+
+    def holm_adjust(p_values):
+        """Holm correction, because the NM seed is tested against two controls in each panel."""
+        order = np.argsort(p_values)
+        adjusted = np.ones(len(p_values))
+        running_max = 0.0
+        for rank, index in enumerate(order):
+            running_max = max(running_max, min(1.0, p_values[index] * (len(p_values) - rank)))
+            adjusted[index] = running_max
+        return adjusted
+
+    def stars(p_value):
+        if p_value < 0.001:
+            return '***'
+        if p_value < 0.01:
+            return '**'
+        if p_value < 0.05:
+            return '*'
+        return 'n.s.'
+
     columns = [("drawing", "Registration only", "#4C72B0"),
                ("nm_blind", "45% of search region,\nno NM contrast", "#8C8C8C"),
-               ("nm_seed", "NM contrast\nseed", "#FF3B30")]
+               ("nm_seed", "NM contrast\nseed", "#C44E52")]
     fig, axes = plt.subplots(1, 2, figsize=(11, 5))
 
     for axis, metric, label, better in [(axes[0], "dice", "DICE vs expert mask", "higher"),
@@ -3326,8 +3538,11 @@ def build_nm_blind_control_figure(rows, output_file):
             axis.plot([0, 1, 2], subject_values, color="0.7", lw=0.8, alpha=0.6)
         for position, ((_, _, colour), column_values) in enumerate(zip(columns, values)):
             axis.plot(np.full(len(column_values), position), column_values, "o", color=colour, ms=5)
-            axis.text(position + 0.08, np.median(column_values), f"{np.median(column_values):.2f}",
-                      fontsize=10, fontweight="bold", va="center")
+            axis.annotate(f"{np.median(column_values):.2f}",
+                          xy=(position, np.median(column_values)), xytext=(11, 0),
+                          textcoords="offset points", fontsize=10, fontweight="bold",
+                          ha="left", va="center",
+                          path_effects=[withStroke(linewidth=3, foreground="white")])
         axis.plot([0, 1, 2], [np.median(column_values) for column_values in values],
                   color="k", lw=2.5, marker="s", ms=8)
 
@@ -3336,12 +3551,30 @@ def build_nm_blind_control_figure(rows, output_file):
         p_value = wilcoxon(seed, blind).pvalue if np.any(seed != blind) else float("nan")
         #axis.set_title(f"{label} ({better} is better)\nNM seed vs no-NM control: better in "
                        #f"{improved}/{len(seed)}, p = {p_value:.2g}", fontsize=10)
+
+        # The NM seed against each control, paired across subjects.
+        drawing = values[0]
+        raw_p = [p_value,
+                 wilcoxon(seed, drawing).pvalue if np.any(seed != drawing) else float("nan")]
+        adjusted_p = holm_adjust(np.array(raw_p))
+
+        low = min(column_values.min() for column_values in values)
+        high = max(column_values.max() for column_values in values)
+        span = high - low
+        for offset, (position, adjusted) in enumerate(zip([1, 0], adjusted_p)):
+            height = high + span * (0.08 + 0.11 * offset)
+            axis.plot([position, position, 2, 2],
+                      [height - span * 0.02, height, height, height - span * 0.02], lw=1.0, color='0.3')
+            axis.text((position + 2) / 2.0, height, stars(adjusted), ha='center', va='bottom', fontsize=10)
+        axis.set_ylim(low - span * 0.08, high + span * 0.32)
+
+        axis.set_ylabel(label)
         axis.set_xticks([0, 1, 2])
         axis.set_xticklabels([column_label for _, column_label, _ in columns])
         axis.set_xlim(-0.4, 2.5)
         axis.spines[["top", "right"]].set_visible(False)
 
-    fig.suptitle(f"Registration alone, position alone, and NM contrast (n = {len(rows)})", fontsize=12)
+    fig.suptitle(f"Registration alone, position alone, and NM contrast", fontsize=12)
     fig.tight_layout()
     save_poster_figure(fig, output_file)
     plt.close(fig)
