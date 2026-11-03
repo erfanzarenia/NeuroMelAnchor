@@ -20,12 +20,12 @@ Current as of pipeline v3.0 (2026-09-14).
   inverse warping of SN and CP, the search region, the contrast map, the NM mask with
   closing, the core-rim variant, probabilistic atlas warping and thresholding, atlas
   anchoring, and pairwise scoring.
-- **Group QC.** Per-subject dashboards and output manifests, the group plots and the
-  two summary tables. With manual masks, also the poster figures and the NM-blind
-  control.
+- **Group QC** (`workflow/qc/group_qc.py`). Per-subject dashboards and output
+  manifests, the group plots and the two summary tables. With manual masks, also the
+  accuracy and contour figures, the NM-blind control and the statistics table.
 - **`--hires`** 0.5 mm re-warping.
 - **`--test`** single-subject mode with `_TEST`-suffixed group outputs.
-- **Standalone tools** in `workflow/tools/` and **figure scripts** in
+- **Standalone tools** in `workflow/tools/` and the **figure script** in
   `workflow/figures/`, all with working command lines.
 
 ## Implemented but lightly exercised
@@ -102,50 +102,45 @@ Current as of pipeline v3.0 (2026-09-14).
 9. **The V4 alignment is a rigid shift of about 1.3 mm.** It assumes the V4 template
    and the group average differ only by translation. This held for the cohorts run so
    far but has not been shown in general.
-10. **The threshold line in `Poster_CNR_Histogram_*` is approximate.** The threshold
-    ratio matches the pipeline's, but the figure maps it onto raw intensities using a
-    CP reference from the uneroded CP mask. The pipeline instead thresholds the
-    smoothed ratio map, uses an eroded CP, and also caps the mask at the 99th
-    percentile. Treat the line as illustrative.
-11. **The NM-blind control is not volume-matched.** It keeps exactly the top-45% share
+10. **The NM-blind control is not volume-matched.** It keeps exactly the top-45% share
     of the search region by depth, while the final NM mask is further changed by the
     99th-percentile cap, the component filter and the closing. Both voxel counts are in
-    `Poster_NM_Blind_Control.csv`; part of any DICE difference may reflect mask size.
-12. **Poster statistics are descriptive.** `Poster_Accuracy` uses paired Wilcoxon
+    `Group_QC_NM_Blind_Control.csv`; part of any DICE difference may reflect mask size.
+11. **Group statistics are descriptive.** `Group_QC_Accuracy` uses paired Wilcoxon
     signed-rank tests with a Holm correction across its three atlas comparisons, and
-    `Poster_Statistics.csv` repeats every comparison with sign tests, bootstrap
+    `Group_QC_Statistics.csv` repeats every comparison with sign tests, bootstrap
     intervals and Holm adjustment both within and across the tests. None of this is a
     validation against an independent reference.
 
 ### Technical
 
-13. **The pipeline is a single script of about 4,200 lines.** It parses arguments at
+12. **The pipeline is a single script of about 2,550 lines.** It parses arguments at
     import time, so it cannot be imported or unit-tested in the usual way. The tests
     work around this by lifting functions out with `ast`.
-14. **`--output_root` must sit inside `--project_root`** when the V4 template is
+13. **`--output_root` must sit inside `--project_root`** when the V4 template is
     built, because the container mounts only `--project_root`.
-15. **Stage `segment` is interactive** and cannot run unattended.
-16. **`--rebuild_template` and an existing tracing are mutually exclusive.** This is
+14. **Stage `segment` is interactive** and cannot run unattended.
+15. **`--rebuild_template` and an existing tracing are mutually exclusive.** This is
     by design, since a rebuilt template invalidates the tracing, but it makes
     rebuilding a careful manual operation.
-17. **Subject discovery is a bare `sub-*` glob.** There is no BIDS validation, so a
+16. **Subject discovery is a bare `sub-*` glob.** There is no BIDS validation, so a
     stray directory matching the prefix is treated as a subject.
-18. **Resuming relies on Nipype's cache.** A failed subject restarts from its last
+17. **Resuming relies on Nipype's cache.** A failed subject restarts from its last
     cached step, which depends on an intact `--work_dir`.
-19. **The anchored atlas is saved as `anat/transform_Warped.nii.gz`,** the ANTs default
+18. **The anchored atlas is saved as `anat/transform_Warped.nii.gz`,** the ANTs default
     name, rather than the `CIT168_Anchored` its DataSink key suggests. Code that reads
     it back already looks for that name first.
-20. **`--seed_image raw` fails when a scan's qform and sform disagree.** ANTs writes the
+19. **`--seed_image raw` fails when a scan's qform and sform disagree.** ANTs writes the
     warped trace on the qform grid while nibabel reads the raw image's sform, so the grid
     check rejects the subject (seen for BioGen `sub-059`).
 
 ### Reproducibility
 
-21. **`requirements.txt` pins one working environment**, not a tested minimum.
-22. **Registrations are not bit-reproducible.** ANTs runs multithreaded without a fixed
+20. **`requirements.txt` pins one working environment**, not a tested minimum.
+21. **Registrations are not bit-reproducible.** ANTs runs multithreaded without a fixed
     seed, so two runs of the same code on the same data give slightly different transforms
     and masks (seed Dice about 0.98 between repeat runs on BioGen `sub-002`).
-23. **External tool versions are not recorded.** The run log now records the command
+22. **External tool versions are not recorded.** The run log now records the command
     line and script path, but not the ANTs, SPM or ITK-SNAP versions, so results cannot
     be fully reproduced from the repository alone.
 
@@ -182,11 +177,11 @@ point for any future modularization. See [../legacy/README.md](../legacy/README.
 
 1. Revisit the threshold rule (items 2 and 3): a floor that can act, or a rule tied to
    each subject's contrast distribution, as the authors' note suggests.
-2. Record ANTs, SPM and ITK-SNAP versions in the run log (item 23), the cheapest real
+2. Record ANTs, SPM and ITK-SNAP versions in the run log (item 22), the cheapest real
    improvement to reproducibility.
 3. Promote the core-rim constants to command-line options (item 5), keeping current values as
    defaults.
-4. Volume-match the NM-blind control (item 11) before using it as evidence.
+4. Volume-match the NM-blind control (item 10) before using it as evidence.
 5. Decide the fate of the native-space builder by comparing it with the MNI-space
    builder on one cohort.
 6. Decide whether `bilateral_nm` or the hysteresis refinement is worth reconstructing

@@ -91,6 +91,8 @@ abort a group run.
 
 ## Group outputs
 
+In `<output_root>/group_qc/`.
+
 | File | Contents |
 |---|---|
 | `Group_QC_Pairwise_Summary.csv` | One row per subject and pair with `subject_id`, `pair`, `dice`, `jaccard`, `precision`, `recall`, `hd95_mm`, the mean, median, HD90, HD95 and maximum surface distances, `centroid_distance_mm`, and the volumes of A and B with their difference. **The file to load for group statistics** |
@@ -102,28 +104,22 @@ abort a group run.
 | `Group_QC_Seed_Atlas_Coupling.png` | How far the NM mask departs from the atlas, which is how much subject-specific information it adds |
 | `Group_QC_Boundary_vs_Core_CR.png` | Contrast ratio at the manual boundary against the interior; the motivation for the core-rim variant |
 
-With `--test`, every group and poster file gains a `_TEST` suffix.
+All group files are written to `<output_root>/group_qc/`. With `--test`, each gains a `_TEST`
+suffix.
 
 ---
 
-## Poster figures
+## Accuracy figures and statistics
 
-Group QC writes these when manual masks are available, each as PNG and SVG. They were made for
-the Brainhack Western 2026 poster.
+Group QC writes these when manual masks are available.
 
 | File | Contents |
 |---|---|
-| `Poster_Accuracy` | Median DICE and HD95 against the manual masks, with every subject shown, for the NM mask, CIT168, CIT168 probabilistic and NMS probabilistic. The NM mask is compared with each atlas by a paired Wilcoxon signed-rank test, Holm-corrected across the three comparisons; a comparison whose paired differences are all zero is reported as not significant |
-| `Poster_Contours_{worst,median,best}_<sub>` | For the subjects with the lowest, median and highest NM-mask DICE: the expert mask filled, with the NM mask, CIT168 and NMS outlined, on three axial slices (one row per method) |
-| `Poster_Strip_<sub>` | The median subject on the slice where the expert SN is largest, one panel per method |
-| `Poster_CNR_Histogram_<sub>` | The median subject's CP and search-region intensities, with the CP reference and an approximate threshold line |
-| `Poster_CNR_Histogram_Group` | Every subject's intensities divided by their CP reference, shown as a mean with an interquartile band |
-| `Poster_NM_Blind_Control` (`.csv` and figure) | See below |
-| `Poster_Statistics.csv` | Every paired comparison behind the poster in one table: medians for the NM mask and the other method, the median difference with a bootstrap 95% interval, how many subjects each wins, and Wilcoxon, sign-test and Holm-adjusted p values. Differences are signed so a positive value always means the NM mask is better |
-
-The threshold line in `Poster_CNR_Histogram_<sub>` is illustrative: the pipeline thresholds the
-smoothed contrast map with an eroded CP mask, which a line on raw intensities cannot show
-exactly.
+| `Group_QC_Accuracy.png` | Median DICE and HD95 against the manual masks, with every subject shown, for the NM mask, CIT168, CIT168 probabilistic and NMS probabilistic. The NM mask is compared with each atlas by a paired Wilcoxon signed-rank test, Holm-corrected across the three comparisons; a comparison whose paired differences are all zero is reported as not significant |
+| `Group_QC_Contours_{worst,median,best}_<sub>.png` | For the subjects with the lowest, median and highest NM-mask DICE: the expert mask filled, with the NM mask, CIT168 and NMS outlined, on three axial slices (one row per method) |
+| `Group_QC_CNR_Histogram.png` | Every subject's intensities divided by their CP reference, shown as a mean with an interquartile band |
+| `Group_QC_NM_Blind_Control.csv` and `.png` | See below |
+| `Group_QC_Statistics.csv` | Every paired comparison in one table: medians for the NM mask and the other method, the median difference with a bootstrap 95% interval, how many subjects each wins, and Wilcoxon, sign-test and Holm-adjusted p values. Differences are signed so a positive value always means the NM mask is better |
 
 ### The NM-blind control
 
@@ -136,9 +132,9 @@ a manual mask it scores three masks against the expert mask:
    from the region's edge, instead of by brightness.
 3. **NM mask:** the pipeline's contrast-based mask.
 
-`Poster_NM_Blind_Control.csv` holds, per subject, the voxel counts of the search region and both
+`Group_QC_NM_Blind_Control.csv` holds, per subject, the voxel counts of the search region and both
 masks, and the DICE and HD95 of all three. The figure links each subject across the three; the counts and p values for the same
-comparison are in `Poster_Statistics.csv`.
+comparison are in `Group_QC_Statistics.csv`.
 
 The control is not volume-matched: the NM mask also passes through the 99th-percentile cap, the
 component filter and the closing, so it rarely keeps exactly 45% of the region. Compare the

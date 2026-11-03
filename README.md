@@ -71,9 +71,10 @@ When `--manual_dir` is given, each is also compared with the subject's manual tr
 | **1: Forward normalization** | `--stage 1` | Realign the NM acquisitions (SPM), bias correct (N4) and average them; brain-extract the T1; register T1 to MNI (brainstem-weighted SyN) and NM to T1 (rigid); compose the transforms; write registration and motion QC; build the group-average NM template |
 | **Segment** | `--stage segment` | Build the FireANTs V4 midbrain drawing template, align it to the group average, and open ITK-SNAP to trace CP (label 1) and SN (label 2). Done **once per dataset** |
 | **2: Inverse normalization** | `--stage 2` | Register each subject to the group template, warp SN and CP back to native NM space, build the search region, compute the contrast map and NM mask, derive the comparison masks, and score them |
-| **Group QC** | `--stage group_qc` | From existing Stage 2 outputs, build per-subject dashboards, output manifests and group plots, plus the poster figures and an NM-blind control when manual masks are available. Runs no registration |
+| **Group QC** | `--stage group_qc` | From existing Stage 2 outputs, build per-subject dashboards, output manifests, group plots and summary tables, plus accuracy figures, an NM-blind control and a statistics table when manual masks are available. Runs no registration. The code is `workflow/qc/group_qc.py`, which can also be run on its own |
 
-`--stage all` runs 1, segment, 2 and group QC in order. `--stage 2` also runs group QC.
+`--stage all` runs 1, segment, 2 and group QC in order. `--stage 2` also runs group QC, unless
+`--skip_group_qc` is given.
 
 ---
 
@@ -126,8 +127,7 @@ sub-01/
 ├── Study-Specific_NM_Template.nii.gz
 ├── drawing_template/ the V4 template
 ├── manual_trace_v4/  the SN and CP tracing, drawn once
-├── Group_QC_*        group plots and summary tables
-├── Poster_*          poster figures and the NM-blind control (with manual masks)
+├── group_qc/         group plots, summary tables and statistics
 └── NeuroMelAnchor_master.log
 ```
 
@@ -140,7 +140,8 @@ Every file is listed in [docs/DATA_SPECIFICATION.md](docs/DATA_SPECIFICATION.md)
 ```
 workflow/scripts/   the pipeline and the template builders
 workflow/tools/     standalone utilities: resource generation, renaming, R2* fitting
-workflow/figures/   post-hoc figure scripts made for the Brainhack Western 2026 poster
+workflow/qc/        QC reports: subject dashboards and group QC, run after Stage 2
+workflow/figures/   a post-hoc mask comparison figure script
 workflow/workspace/ ITK-SNAP workspace template
 resources/          atlas priors, MNI references and retired tracings
 config/             example cohort configuration (reference only)
@@ -162,7 +163,7 @@ See [docs/REPOSITORY_STRUCTURE.md](docs/REPOSITORY_STRUCTURE.md).
 | [USAGE.md](docs/USAGE.md) | Running each stage, the full option reference, and search-region sweeps |
 | [WORKFLOW.md](docs/WORKFLOW.md) | What each processing step does and why |
 | [MANUAL_SEGMENTATION.md](docs/MANUAL_SEGMENTATION.md) | The ITK-SNAP tracing protocol |
-| [EVALUATION.md](docs/EVALUATION.md) | QC metrics, flags, poster figures, and how to read them |
+| [EVALUATION.md](docs/EVALUATION.md) | QC metrics, flags, group figures, and how to read them |
 | [REPOSITORY_STRUCTURE.md](docs/REPOSITORY_STRUCTURE.md) | Where everything lives |
 | [STATUS.md](docs/STATUS.md) | **What is implemented, what is unfinished, and known limitations** |
 | [CHANGELOG.md](CHANGELOG.md) | What changed, and when |

@@ -150,10 +150,12 @@ Builds each subject's dashboard and output manifest, then aggregates the metrics
 plots of DICE, dot plots of HD95, deviation box plots, a method comparison, the seed-atlas
 coupling and a boundary-versus-core contrast plot, plus two CSV summaries for group statistics.
 
-When manual masks are available it also writes the poster figures and the NM-blind control. The
+When manual masks are available it also writes the accuracy and contour figures, the NM-blind
+control and a statistics table. The
 control asks whether NM contrast adds anything beyond registration and position, by comparing
 the NM mask with the propagated tracing and with a mask of the same share of the search region
 chosen by depth rather than brightness.
 
-Group QC reads only existing Stage 2 outputs, so `--stage group_qc` is the cheap way to
-regenerate summaries. See [EVALUATION.md](EVALUATION.md).
+Group QC reads only existing Stage 2 outputs, so `--stage group_qc` (or
+`workflow/qc/group_qc.py` on its own) is the cheap way to regenerate summaries. The group files
+go to `<output_root>/group_qc/`. See [EVALUATION.md](EVALUATION.md).

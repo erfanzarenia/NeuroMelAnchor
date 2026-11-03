@@ -12,7 +12,8 @@ NeuroMelAnchor/
 ├── workflow/
 │   ├── scripts/      the pipeline and the template builders
 │   ├── tools/        standalone utilities
-│   ├── figures/      post-hoc figure scripts
+│   ├── qc/           QC reports, run after Stage 2
+│   ├── figures/      a post-hoc figure script
 │   └── workspace/    ITK-SNAP workspace template
 ├── resources/
 │   ├── tpl-MNI152NLin2009cAsym/
@@ -27,7 +28,7 @@ NeuroMelAnchor/
 
 | File | Status | Purpose |
 |---|---|---|
-| `neuromelanchor_pipeline.py` | **canonical** | The whole pipeline, about 4,200 lines: all four stages, selected with `--stage` |
+| `neuromelanchor_pipeline.py` | **canonical** | The pipeline, about 2,550 lines: all four stages, selected with `--stage`. Group QC is called from `workflow/qc/` |
 | `template_builder.py` | **canonical** | FireANTs iterative template construction in MNI space. Called by `--stage segment`; can also be run directly |
 | `template_builder_native.py` | experimental | The same approach on a chosen subject's native grid. Not called by the pipeline |
 | `native_template_prep.py` | experimental | Prepares per-subject inputs for the native builder |
@@ -53,18 +54,22 @@ The pipeline never calls these. Each has its own `--help`; see
 | `mp2rage_uniden_batch.sh` | Runs the above over a BIDS directory |
 | `fit_r2star.py` | R2* and T2* fitting from multi-echo GRE; unrelated to the pipeline |
 
-## `workflow/figures/`: figure scripts
+## `workflow/qc/`: QC reports
 
-Post-hoc scripts that read finished outputs; see
+| File | Purpose |
+|---|---|
+| `group_qc.py` | Per-subject dashboards and output manifests, and the group plots, summary tables, accuracy figures, NM-blind control and statistics in `<output_root>/group_qc/`. Called by the pipeline after Stage 2 and by `--stage group_qc`; also runs on its own with `--output_root` |
+
+It reads only finished Stage 2 outputs and never registers images or builds masks.
+
+## `workflow/figures/`: figure script
+
+A post-hoc script that reads finished outputs; see
 [../workflow/figures/README.md](../workflow/figures/README.md).
 
 | File | Purpose |
 |---|---|
 | `mask_comparison_figures.py` | Per-subject and cohort figures comparing the NM mask with the atlases |
-| `poster_workflow_panels.py` | The method panels of the Brainhack Western 2026 poster |
-| `poster_dilation_sweep.py` | Metrics of the NM mask against `--search_dilation_mm`, across a sweep |
-
-The pipeline makes the group-level poster figures itself during group QC.
 
 ## `workflow/workspace/`
 
@@ -107,7 +112,7 @@ Smoke checks and unit tests that need no external software and no imaging data. 
 | `USAGE.md` | Running each stage, the option reference, and sweeps |
 | `WORKFLOW.md` | What each step does and why |
 | `MANUAL_SEGMENTATION.md` | The ITK-SNAP tracing protocol |
-| `EVALUATION.md` | QC metrics, flags and poster figures |
+| `EVALUATION.md` | QC metrics, flags and group figures |
 | `REPOSITORY_STRUCTURE.md` | This file |
 | `STATUS.md` | Implemented and unfinished work, and known limitations |
 
@@ -115,8 +120,9 @@ Smoke checks and unit tests that need no external software and no imaging data. 
 
 ## What is deliberately absent
 
-Imaging data, derivatives, Nipype work directories, the FireANTs container image and
-virtual environments are **not** tracked. `.gitignore` excludes `*.nii` and `*.nii.gz`
+Imaging data, derivatives, Nipype work directories, FireANTs (its source and the
+`fireants.sif` container image; see [INSTALL.md](INSTALL.md)) and virtual environments are
+**not** tracked. `.gitignore` excludes `*.nii` and `*.nii.gz`
 everywhere except under `resources/`, the one place where volumes are tracked on
 purpose.
 

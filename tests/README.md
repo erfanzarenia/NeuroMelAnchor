@@ -15,11 +15,10 @@ data is read. Every numeric test builds its own small synthetic volume.
 
 | File | Covers |
 |---|---|
-| `test_repo_layout.py` | Expected scripts, tools, figure scripts and documents exist; every atlas file the pipeline hard-codes is present; no site-specific absolute paths; no compiled files are tracked; there is a single requirements file |
-| `test_scripts_parse.py` | Every Python file parses and every shell script passes `bash -n`; the pipeline's options and stage names are intact; the bodies of Nipype `Function` nodes are self-contained; every standalone script's `--help` works and none runs without arguments; the figure scripts read only file names and CSV columns that the pipeline still writes |
+| `test_repo_layout.py` | Expected scripts, tools, the QC module, the figure script and documents exist; every atlas file the pipeline hard-codes is present; no site-specific absolute paths; no compiled files are tracked; there is a single requirements file |
+| `test_scripts_parse.py` | Every Python file parses and every shell script passes `bash -n`; the pipeline's options and stage names are intact; the bodies of Nipype `Function` nodes are self-contained; every standalone script's `--help` works and none runs without arguments; the figure script and group QC read only file names that the pipeline still writes; the pipeline still calls group QC |
 | `test_mask_helpers.py` | `select_nm_image_files`, `threshold_probability_mask`, `create_core_rim_nm_mask`, `build_sn_roi_mask`, `compute_motion_params`, `dilate_search_region`, `first_nm_file`, `threshold_t1_seed`, `make_t1_seed_reference`, and the closing and slice fill in `extract_tractography_seed` |
-| `test_group_qc_helpers.py` | The NM-blind control in `nm_blind_control_rows`, and `build_poster_accuracy_figure` with tied metrics |
-| `test_figures.py` | Run discovery, metric reading and panel cropping in the figure scripts |
+| `test_group_qc_helpers.py` | `workflow/qc/group_qc.py`: the NM-blind control in `nm_blind_control_rows`, `build_accuracy_figure` with tied metrics, and that group outputs go to `group_qc/` |
 
 ## How the pipeline is tested without importing it
 
@@ -33,8 +32,8 @@ runs them in a bare worker process. `test_nipype_function_nodes_are_self_contain
 checks that property directly, since a node body that relied on a module-level import
 would otherwise fail with a `NameError` inside a worker, hours into a run.
 
-Group QC helpers run in the main process and do use module-level imports, so their tests
-supply those names explicitly.
+Group QC lives in `workflow/qc/group_qc.py`, which parses its arguments only in `main()`,
+so its tests import it directly.
 
 ## What is not covered
 

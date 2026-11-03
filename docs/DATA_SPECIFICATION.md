@@ -54,7 +54,7 @@ Passed with `--manual_dir`; binary, in native NM space:
 ```
 
 Subjects without a matching file are processed normally, and the gap is recorded in their
-`Stage2_Output_Manifest.json`. Manual masks are used only for evaluation and the poster figures;
+`Stage2_Output_Manifest.json`. Manual masks are used only for evaluation;
 they never feed back into segmentation.
 
 ### Atlas resources
@@ -174,8 +174,7 @@ not copied to the output root.
 ├── NeuroMelAnchor_master.log               every run's settings and command line
 ├── NeuroMelAnchor_Phase-1_Dag              Nipype workflow graphs
 ├── NeuroMelAnchor_Pipeline_Dag(.png)
-├── Group_QC_*                              group plots and summary tables
-└── Poster_*                                poster figures and the NM-blind control
+└── group_qc/                              group plots, summary tables and statistics (Group_QC_*)
 ```
 
 | File | Contents |
@@ -188,16 +187,15 @@ not copied to the output root.
 | `Group_QC_Deviation_Boxplots.png` | Deviation box plots by method |
 | `Group_QC_Seed_Atlas_Coupling.png` | How far the NM mask departs from the atlas |
 | `Group_QC_Boundary_vs_Core_CR.png` | Contrast ratio at the manual boundary against the interior |
-| `Poster_Accuracy` | DICE and HD95 against the manual masks for the NM mask and three atlases |
-| `Poster_Contours_{worst,median,best}_<sub>` | Contours for the subjects with the lowest, median and highest NM-mask DICE |
-| `Poster_Strip_<sub>` | One slice per method for the median subject |
-| `Poster_CNR_Histogram_<sub>` and `Poster_CNR_Histogram_Group` | CP and search-region intensities, for the median subject and pooled |
-| `Poster_NM_Blind_Control.csv` and figure | The NM mask against the propagated tracing and an NM-blind control |
-| `Poster_Statistics.csv` | Every paired comparison behind the poster, as one table |
+| `Group_QC_CNR_Histogram.png` | Every subject's CP and search-region intensities, scaled by their CP reference |
+| `Group_QC_Accuracy.png` | DICE and HD95 against the manual masks for the NM mask and three atlases |
+| `Group_QC_Contours_{worst,median,best}_<sub>.png` | Contours for the subjects with the lowest, median and highest NM-mask DICE |
+| `Group_QC_NM_Blind_Control.csv` and `.png` | The NM mask against the propagated tracing and an NM-blind control |
+| `Group_QC_Statistics.csv` | Every paired comparison of the NM mask, as one table |
 
-Poster files are written only when manual masks are available, each figure as PNG and SVG. With
-`--test`, every group and poster file gains a `_TEST` suffix so a test run cannot overwrite a
-real one. The metrics and figures are explained in [EVALUATION.md](EVALUATION.md).
+All of these are in `<output_root>/group_qc/`. The last four rows, and the histogram, are
+written only when manual masks are available. With `--test`, every group file gains a `_TEST`
+suffix so a test run cannot overwrite a real one. The metrics and figures are explained in [EVALUATION.md](EVALUATION.md).
 
 `--work_dir` holds Nipype's cache. It is large, disposable, and safe to delete between
 analyses, but deleting it forces a full recomputation.

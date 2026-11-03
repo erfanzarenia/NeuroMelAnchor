@@ -72,22 +72,44 @@ pipeline launches it directly for `--stage segment`.
 
 ## 5. FireANTs (optional, for the V4 drawing template)
 
-The template builders need `fireants` and a CUDA-capable `torch`. Rather than
-installing these into the pipeline environment, the pipeline looks for a container and
-runs the builder inside it. At startup it tries, in order:
+The template builders need [FireANTs](https://github.com/rohitrango/fireants) and a
+CUDA-capable `torch`. FireANTs is not included in this repository; install it yourself
+with one of the options below. Rather than installing it into the pipeline environment,
+the pipeline looks for a container and runs the builder inside it. At startup it tries,
+in order:
 
 1. `fireants.sif` in `--project_root` with `singularity`
 2. `fireants.sif` in `--project_root` with `apptainer`
 3. a local `fireants` Docker image
 
-If none is found it warns and falls back to the current Python interpreter. To run the
-builders without a container:
+If none is found it warns and falls back to the current Python interpreter.
+
+**Option A: Docker image, then a Singularity/Apptainer image (recommended on a cluster).**
+Build the image from the FireANTs repository's own Dockerfile (needs Docker and the NVIDIA
+Container Toolkit), then convert it into `fireants.sif` in your `--project_root`:
+
+```bash
+git clone https://github.com/rohitrango/fireants
+cd fireants
+docker buildx build -t fireants -f docker/Dockerfile .
+singularity build /path/to/NeuroMelAnchor/fireants.sif docker-daemon://fireants:latest
+```
+
+Use `docker/Dockerfile-cu118` instead if the GPU driver supports only CUDA 11.8. With
+Docker alone, stop after the `docker buildx build` step: the pipeline finds the `fireants`
+image itself. The image is about 4 GB; it is ignored by `.gitignore` and must never be
+committed.
+
+**Option B: pip, without a container.** In the environment that runs the pipeline:
 
 ```bash
 pip install fireants==1.5.0 torch==2.12.0
 ```
 
-To skip this machinery entirely, use `--drawing_template naive`.
+The PyPI package leaves out FireANTs' optional fused CUDA operations, so it is slower and
+uses more GPU memory; see the FireANTs README to build them.
+
+To skip FireANTs entirely, use `--drawing_template naive`.
 
 ## 6. TemplateFlow
 
@@ -100,8 +122,7 @@ export TEMPLATEFLOW_HOME=/path/to/templateflow
 
 ## 7. Generate the 0.5 mm MNI reference
 
-Needed by `--hires`, by the V4 drawing template, and by the T1 panel of
-`workflow/figures/poster_workflow_panels.py`. It is derived, so it is not committed:
+Needed by `--hires` and by the V4 drawing template. It is derived, so it is not committed:
 
 ```bash
 python workflow/tools/resample_mni_reference.py \

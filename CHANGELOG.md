@@ -24,8 +24,8 @@ The previous state of `main` dated from 2026-05-08.
   `--t1_interp`, `--t1_seed_res` and `--skip_t1_outputs`
 - core-rim masking, and comparisons against the CIT168 probabilistic and NMS probabilistic
   atlases
-- a `group_qc` stage with per-subject dashboards, an output manifest, group plots, poster
-  figures, an NM-blind control and a statistics table
+- a `group_qc` stage with per-subject dashboards, an output manifest, group plots, accuracy
+  and contour figures, an NM-blind control and a statistics table
 - `--nm_input combo|echo`, `--drawing_template v4|naive`, and `--dataset` for datasets whose
   file names differ
 - the run log records the settings, the script path and the full command line
@@ -38,7 +38,13 @@ changes the NM mask even at default settings.
 - `Automated_Setup.itksnap` is written to `<output_root>/` instead of into the repository
 - two unused helpers were removed from the pipeline (`combine_downstream_inverse` and
   `binarize_mask`)
-- the poster accuracy figure no longer stops group QC when a paired test sees only tied values
+- group QC moved out of the pipeline into `workflow/qc/group_qc.py`, which the pipeline still
+  runs after Stage 2 (skip with `--skip_group_qc`) and which also runs on its own; group files
+  now go to `<output_root>/group_qc/`
+- poster-only outputs were dropped (the single-slice contour strip, the single-subject
+  histogram, and the transparent PNG and SVG copies); the evaluation figures and tables were
+  renamed from `Poster_*` to `Group_QC_*` and are saved as PNG like the other group plots
+- the accuracy figure no longer stops group QC when a paired test sees only tied values
 - the wording of some QC flag messages and figure titles changed
 
 ### Structure
@@ -49,7 +55,8 @@ changes the NM mask even at default settings.
 | `Template_Builder.py`, and its v2, V3 and V4 revisions | `workflow/scripts/template_builder.py` |
 | `Template_Builder_Native_V1.py`, `Native_Template_Builder_Preparation.py` | `workflow/scripts/template_builder_native.py` and `native_template_prep.py`, both experimental |
 | loose scripts in `Extra_Functions/` and `Scripts/`, including the BioGen 3T preparation | `workflow/tools/`, each with a command line |
-| poster and mask comparison figure scripts | `workflow/figures/` |
+| mask comparison figure script | `workflow/figures/` |
+| poster figure scripts | dropped |
 | two `requirements.txt` files | one at the repository root |
 
 - Superseded pipeline and builder revisions were dropped. The original March pipeline and the

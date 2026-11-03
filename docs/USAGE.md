@@ -89,9 +89,9 @@ python workflow/scripts/neuromelanchor_pipeline.py ... --stage 2 \
   --seed_image raw --trace_route template
 ```
 
-`--stage 2` runs group QC when it finishes.
+`--stage 2` runs group QC when it finishes, unless `--skip_group_qc` is given.
 
-## Stage group_qc: dashboards, group plots and poster figures
+## Stage group_qc: dashboards, group plots and statistics
 
 ```bash
 python workflow/scripts/neuromelanchor_pipeline.py ... --stage group_qc \
@@ -99,9 +99,20 @@ python workflow/scripts/neuromelanchor_pipeline.py ... --stage group_qc \
 ```
 
 Builds the per-subject dashboards, output manifests and group plots from Stage 2
-outputs already on disk. With `--manual_dir` it also writes the poster figures and
-the NM-blind control. It reruns no registration, so it is the stage to use after
+outputs already on disk, and writes the group files to `<output_root>/group_qc/`. With
+`--manual_dir` it also writes the accuracy and contour figures, the NM-blind control and
+the statistics table. It reruns no registration, so it is the stage to use after
 changing a plot. See [EVALUATION.md](EVALUATION.md).
+
+The same reports can be built without the pipeline's inputs, from an output root alone:
+
+```bash
+python workflow/qc/group_qc.py --output_root /path/to/outputs \
+  --manual_dir /path/to/manual_masks --seed_cnr_percentile 55
+```
+
+Pass the `--seed_cnr_percentile` and atlas thresholds the run used: the NM-blind control
+and some output names depend on them.
 
 ---
 
@@ -114,6 +125,7 @@ changing a plot. See [EVALUATION.md](EVALUATION.md).
 | `--n_procs` | `10` | Parallel Nipype processes. ITK and OpenMP threads are capped at `min(n_procs, 8)` |
 | `--stage` | `all` | `1`, `segment`, `2`, `group_qc` or `all` |
 | `--test` | off | First subject only; group QC outputs get a `_TEST` suffix |
+| `--skip_group_qc` | off | Do not build the QC reports after Stage 2; rebuild them later with `--stage group_qc` |
 | `--smooth` | `0` | Gaussian FWHM in mm applied after the MNI warp. `0` skips smoothing |
 
 ### Input selection
@@ -187,20 +199,18 @@ work directory, and each run's outputs are archived before the next one starts.
 Nipype reuses the cached registrations, so only the search region and the steps that
 depend on it are recomputed.
 
-For the Brainhack Western 2026 poster this was done at 0, 0.5, 1.0, 1.5, 2.0, 2.5 and
-3.0 mm on the BioGen 7T echo-1 data (25 subjects). Each run was archived to a
-`results_dil-<mm>` directory, and `--stage group_qc` was then run on each archive:
+For example, on the BioGen 7T echo-1 data (25 subjects) this was done at 0 to 3.0 mm in
+0.5 mm steps, archiving each run to a `results_dil-<mm>` directory:
 
 ```bash
 for mm in 0 0.5 1.0 1.5 2.0 2.5 3.0; do
   python workflow/scripts/neuromelanchor_pipeline.py ... --stage 2 --search_dilation_mm "$mm"
   # archive this run's outputs to /path/to/runs/results_dil-$mm
 done
-
-python workflow/figures/poster_dilation_sweep.py --runs-root /path/to/runs
 ```
 
-The poster used 0.5 mm.
+Each archive then holds its own `group_qc/Group_QC_Pairwise_Summary.csv`, which is the
+file to compare across values. The Brainhack Western 2026 analysis used 0.5 mm.
 
 ---
 
@@ -226,11 +236,11 @@ not called by the pipeline; see [STATUS.md](STATUS.md).
 
 ---
 
-## Figure scripts
+## Figure script
 
-`workflow/figures/` holds the post-hoc scripts that made the poster's method panels
-and dilation-sweep plots. They read finished outputs and never run the pipeline. See
-[../workflow/figures/README.md](../workflow/figures/README.md).
+`workflow/figures/mask_comparison_figures.py` draws per-subject and cohort figures
+comparing the NM mask with the atlases. It reads finished outputs and never runs the
+pipeline. See [../workflow/figures/README.md](../workflow/figures/README.md).
 
 ## Standalone tools
 
@@ -256,5 +266,5 @@ tool takes its paths on the command line; run any with `--help`. See
 | `Segmentation Mask is Empty` | ITK-SNAP was closed without saving |
 | `One or both masks have very few voxels` | Fewer than 50 voxels in CP or SN; inspect the tracing before continuing |
 | `SN mask missing` or `Group Average NM Template missing` | Run the earlier stage first |
-| No poster figures after group QC | Poster figures need `--manual_dir` and manual masks for the subjects |
+| No accuracy figures or statistics after group QC | They need `--manual_dir` and manual masks for the subjects |
 | Out of memory | Lower `--n_procs` |

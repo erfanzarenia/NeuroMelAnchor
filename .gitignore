@@ -39,3 +39,8 @@ work_*/
 Output/
 derivatives/
 *.log
+
+# FireANTs is installed separately (docs/INSTALL.md): never commit its source or container image
+fireants/
+fireants.sif
+*.sif
