@@ -12,7 +12,7 @@ import sys
 
 import pytest
 
-from conftest import (REPO_ROOT, SCRIPTS_DIR, TOOLS_DIR, FIGURES_DIR, free_variables,
+from conftest import (REPO_ROOT, SCRIPTS_DIR, TOOLS_DIR, FIGURES_DIR, QC_DIR, free_variables,
                       nipype_function_node_names, pipeline_source)
 
 ALL_PYTHON = sorted(p for p in REPO_ROOT.rglob("*.py") if ".git" not in p.parts)
@@ -83,14 +83,13 @@ def test_nipype_function_nodes_are_self_contained(name):
                       f"inside the function or Nipype will fail in the worker")
 
 
-# Standalone command-line scripts: the tools plus the post-hoc figure scripts.
+# Standalone command-line scripts: the tools, the QC reports and the figure script.
 STANDALONE_SCRIPTS = [
     *(TOOLS_DIR / name for name in [
         "bids_rename.py", "fit_r2star.py", "make_brainstem_mask.py",
         "make_midbrain_prior.py", "prepare_biogen_3t.py", "resample_mni_reference.py"]),
+    QC_DIR / "group_qc.py",
     FIGURES_DIR / "mask_comparison_figures.py",
-    FIGURES_DIR / "poster_dilation_sweep.py",
-    FIGURES_DIR / "poster_workflow_panels.py",
 ]
 
 
@@ -111,28 +110,39 @@ def test_standalone_requires_arguments(script):
     assert result.returncode != 0, f"{script.name} ran with no arguments"
 
 
-# Files the figure scripts read from a pipeline output root. Renaming one in the
-# pipeline would silently break the figures, so each must still be written there.
+# Files the figure script and the QC reports read from a pipeline output root. Renaming
+# one in the pipeline would silently break them, so each must still be written there.
+# Names ANTs derives itself (the *_trans outputs) do not appear literally and are left out.
 FIGURE_INPUT_NAMES = [
-    "Group_QC_Pairwise_Summary.csv",
+    "mean_NM_bias_corrected.nii.gz",
+    "Native_CoreRim_NM_Mask.nii.gz",
+    "Native_Tractography_Seed_SNc.nii.gz",
+    "SN_Mask_QC.json",
+    "Subject_CNR_Map_Smoothed.nii.gz",
+]
+QC_INPUT_NAMES = [
     "Native_SN_Search_Region.nii.gz",
     "Native_Tractography_Seed_SNc.nii.gz",
-    "MNI_SNc_Manual_trans.nii.gz",
     "mean_NM_bias_corrected.nii.gz",
-    "SN_Template_V4_aligned.nii.gz",
-    "MNI_SNc_Manual.nii.gz",
-    "MNI_CP_Manual.nii.gz",
+    "Seed_Diagnostics.json",
+    "SN_Mask_QC.json",
 ]
 
 
-def test_figure_scripts_read_names_the_pipeline_writes(pipeline_text):
-    figure_source = "".join(path.read_text() for path in FIGURES_DIR.glob("*.py"))
+def test_figure_script_reads_names_the_pipeline_writes(pipeline_text):
+    figure_source = (FIGURES_DIR / "mask_comparison_figures.py").read_text()
     for name in FIGURE_INPUT_NAMES:
-        assert name in figure_source, f"{name} is no longer read by the figure scripts; update this list"
-        assert name in pipeline_text, f"the figure scripts read {name}, which the pipeline no longer writes"
+        assert name in figure_source, f"{name} is no longer read by the figure script; update this list"
+        assert name in pipeline_text, f"the figure script reads {name}, which the pipeline no longer writes"
 
 
-def test_pairwise_summary_has_the_columns_the_sweep_plots(pipeline_text):
-    """poster_dilation_sweep.py plots these columns of Group_QC_Pairwise_Summary.csv."""
-    for column in ["subject_id", "pair", "dice", "precision", "recall", "hd95_mm"]:
-        assert f'"{column}"' in pipeline_text or f"'{column}'" in pipeline_text, column
+def test_group_qc_reads_names_the_pipeline_writes(pipeline_text):
+    qc_source = (QC_DIR / "group_qc.py").read_text()
+    for name in QC_INPUT_NAMES:
+        assert name in qc_source, f"{name} is no longer read by group_qc.py; update this list"
+        assert name in pipeline_text, f"group_qc.py reads {name}, which the pipeline no longer writes"
+
+
+def test_pipeline_runs_group_qc_by_default(pipeline_text):
+    assert "from group_qc import run_group_qc_stage" in pipeline_text
+    assert "'--skip_group_qc'" in pipeline_text

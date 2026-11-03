@@ -22,6 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = REPO_ROOT / "workflow" / "scripts"
 TOOLS_DIR = REPO_ROOT / "workflow" / "tools"
 FIGURES_DIR = REPO_ROOT / "workflow" / "figures"
+QC_DIR = REPO_ROOT / "workflow" / "qc"
 PIPELINE = SCRIPTS_DIR / "neuromelanchor_pipeline.py"
 RESOURCES = REPO_ROOT / "resources" / "tpl-MNI152NLin2009cAsym"
 

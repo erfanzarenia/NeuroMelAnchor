@@ -26,6 +26,7 @@ execution:
   stage: all                   # --stage {1, segment, 2, group_qc, all}
   smooth: 0                    # --smooth, FWHM in mm; 0 disables
   test: false                  # --test, first subject only
+  skip_group_qc: false         # --skip_group_qc
   hires: true                  # --hires, required for the V4 drawing template
 
 template:

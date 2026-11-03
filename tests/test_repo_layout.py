@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import REPO_ROOT, SCRIPTS_DIR, TOOLS_DIR, FIGURES_DIR, RESOURCES, pipeline_source
+from conftest import REPO_ROOT, SCRIPTS_DIR, TOOLS_DIR, FIGURES_DIR, QC_DIR, RESOURCES, pipeline_source
 
 EXPECTED_SCRIPTS = [
     "neuromelanchor_pipeline.py",
@@ -33,8 +33,6 @@ EXPECTED_TOOLS = [
 
 EXPECTED_FIGURES = [
     "mask_comparison_figures.py",
-    "poster_dilation_sweep.py",
-    "poster_workflow_panels.py",
 ]
 
 EXPECTED_DOCS = [
@@ -67,6 +65,10 @@ def test_tools_present(name):
 @pytest.mark.parametrize("name", EXPECTED_FIGURES)
 def test_figure_scripts_present(name):
     assert (FIGURES_DIR / name).is_file()
+
+
+def test_group_qc_module_present():
+    assert (QC_DIR / "group_qc.py").is_file()
 
 
 @pytest.mark.parametrize("name", EXPECTED_DOCS)
